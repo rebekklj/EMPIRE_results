@@ -1,0 +1,8 @@
+# store resultater holdes utenfor repoet
+data/
+*.csv
+*.csv.gz
+*.parquet
+*.npz
+*.zip
+*.gz

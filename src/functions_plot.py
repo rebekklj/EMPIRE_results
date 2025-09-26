@@ -109,14 +109,14 @@ def Plot_Installed_capacity_per_tech_split(df,
         nuc_idx = labels.index('Nuclear')
         nuc_x = ax.get_xticks()[nuc_idx]
         group_w = barw * len(periods)
-        ymax = max(rect.get_height()
+        ymax = (max(rect.get_height()
                    for cont in ax.containers
                    for rect in cont
-                   if nuc_x - group_w / 2 <= rect.get_x() <= nuc_x + group_w / 2)
+                   if nuc_x - group_w / 2 <= rect.get_x() <= nuc_x + group_w / 2) + 0.01)
 
         axins = inset_axes(ax, width='30%', height='45%',
                            loc='upper left',
-                           bbox_to_anchor=(0.1, 0.1, 1, 1),
+                           bbox_to_anchor=(0.1, 0.01, 1, 1),
                            bbox_transform=ax.transAxes,
                            borderpad=1.2)
         for cont in ax.containers:
@@ -318,9 +318,8 @@ def plot_h2_demand_stacked_area(
             'Hydrogen used for steel [ton]',
             'Hydrogen used for cement [ton]',
             'Hydrogen used for ammonia [ton]',
-            'Hydrogen used for oil refining [ton]',
+            'Hydrogen used for oil refining [ton]'],
 
-        ],
         period_order=("2020-2025", "2025-2030", "2030-2035", "2035-2040",
                       "2040-2045", "2045-2050", "2050-2055"),
         n_hours=None,

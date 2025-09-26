@@ -47,6 +47,7 @@ plot_top_map(Elec_generation_inv,3)
 hydrogen_production=pd.read_csv(result_dir/ 'results_hydrogen_production.csv')
 HydrogenProd_piechart(hydrogen_production, 12, 2, savefigure=False, figurename=None, results_dir=None)
 
+# In[]
 
 
 

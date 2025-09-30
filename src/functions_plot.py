@@ -391,6 +391,81 @@ def plot_h2_demand_stacked_area(
 
     plt.show()
 
+def plot_power_demand(
+        df,
+        sectors=['Power load [MWh]','Power for transport [MWh]','Power for steel [MWh]','Power for cement [MWh]','Power for ammonia [MWh]','Power reformer plant [MWh]','Power for NG [MWh]','Power shed [MWh]','Power for hydrogen [MWh]'],
+
+        period_order=("2020-2025", "2025-2030", "2030-2035", "2035-2040",
+                      "2040-2045", "2045-2050", "2050-2055"),
+        n_hours=None,
+        y_max=None,
+        savefigure=False,
+        results_dir=None,
+        figurename=None
+):
+    # Sjekk at alle kolonner finnes
+    missing = [c for c in sectors + ['Period', 'Scenario'] if c not in df.columns]
+    if missing:
+        raise ValueError(f"Mangler kolonner i df: {missing}")
+
+    # 1) Aggreger innen hver (Period, Scenario) over alle andre dimensjoner
+    #    (Node, Season, Hour, osv. blir summer)
+    per_per_sc = (df.groupby(['Period', 'Scenario'])[sectors]
+                  .sum()
+                  .reset_index())
+
+    # 2) Ta gjennomsnitt over scenarier (like sannsynligheter)
+    #    NB: Dette tilsvarer å dele på antall scenarier per periode.
+    agg = (per_per_sc.groupby('Period')[sectors]
+           .mean()
+           .reset_index())
+
+    # 3) Sett korrekt rekkefølge på periodene
+    agg['Period'] = pd.Categorical(agg['Period'], categories=period_order, ordered=True)
+    agg = agg.sort_values('Period')
+
+    seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
+
+    # 4) Konverter til Mton og skaler for timer
+    agg_mton = agg.copy()
+    agg_mton[sectors] = agg_mton[sectors] * seasonScale / 1e6
+
+    # 5) Plot: stacked area per periode
+    x = np.arange(len(agg_mton['Period']))
+    y = [agg_mton[c].values for c in sectors]
+
+    colors = ['darkslategrey','teal','paleturquoise', 'gold', 'orange', 'seagreen','hotpink','lime','rebeccapurple']
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ax.stackplot(x, y, labels=[s.replace('Power ', '').replace(' [MWh]', '') for s in sectors], colors=colors,
+                 alpha=0.5)
+
+    # Akser og pynt
+    ax.set_xticks(x)
+    ax.set_xticklabels(agg_mton['Period'])
+    ax.set_xlabel("Investment period", fontsize=14)
+    ax.set_ylabel("Power demand [TWh/yr]", fontsize=14)
+    ax.grid(axis="y", linestyle="--", alpha=0.5)
+    ax.legend(loc="upper left", ncol=2, fontsize=11)
+
+    if y_max is not None:
+        ax.set_ylim(0, y_max)
+
+    # Valgfritt: totaletiketter på toppen av hvert punkt
+    totals = agg_mton[sectors].sum(axis=1).values
+    for i, t in enumerate(totals):
+        ax.text(i, t, f"{t:.2f}", ha='center', va='bottom', fontsize=10)
+
+    plt.tight_layout()
+
+    if savefigure and results_dir and figurename:
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        figpath = Path(results_dir) / f"{figurename}_EL_demands.png"
+        plt.savefig(figpath, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {figpath}")
+
+    plt.show()
+
 
 def transmission_map(df, savefigure=False, figurename=None, results_dir=None):
     # === 2. Lag retningsuavhengige nodepar ===
@@ -825,7 +900,7 @@ def plot_top_map(
 
     if savefigure:
         Path(results_dir).mkdir(parents=True, exist_ok=True)
-        out = Path(results_dir) / f"{figurename}.png"
+        out = Path(results_dir) / f"{figurename}_topTech.png"
         plt.savefig(out, dpi=300, bbox_inches='tight')
         print(f"Figur lagret til {out}")
 
@@ -1087,3 +1162,127 @@ def weather_data_plot(df, scen, country, tech1, tech2=None, tech3=None, savefigu
             plt.savefig(out, format='eps', bbox_inches='tight')
             print(f"Figure saved to {out}")
         plt.show()
+
+
+def plot_hydrogen_use(hydrogen_use, n_hours, n_scen, savefigure=False, figurename=None, results_dir=None):
+    hydrogen_use['Total hydrogen demand [ton]'] = hydrogen_use['Hydrogen used for transport [ton]'] + hydrogen_use[
+        'Hydrogen used for oil refining [ton]'] + hydrogen_use['Hydrogen used for ammonia [ton]'] + hydrogen_use[
+                                                      'Hydrogen used for cement [ton]'] + hydrogen_use[
+                                                      'Hydrogen burned for power and heat [ton]'] + hydrogen_use[
+                                                      'Hydrogen used for steel [ton]']
+    seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_scen)
+
+    # -----------------------PIE HYDROGEN TOP 8 NODES----------------------#
+    Annual_hydrogen_demand = (hydrogen_use.groupby(['Node'], as_index=False)['Total hydrogen demand [ton]'].sum())
+    Annual_hydrogen_demand['Total hydrogen demand [ton]'] = Annual_hydrogen_demand[
+                                                                'Total hydrogen demand [ton]'] * seasonScale * 5 / n_scen
+    top_8 = Annual_hydrogen_demand.nlargest(8, 'Total hydrogen demand [ton]').reset_index(drop=True)
+
+    other = Annual_hydrogen_demand['Total hydrogen demand [ton]'].sum() - top_8['Total hydrogen demand [ton]'].sum()
+
+    labels = top_8['Node']
+    values = top_8['Total hydrogen demand [ton]']
+
+    values_all = list(values) + [other]
+    labels_all = list(labels.astype(str)) + ['Other']
+    colors = ["teal", "lightskyblue", "darkseagreen", "khaki", "plum", "darkslateblue", "lightsteelblue", "orange",
+              "lemonchiffon"]
+    plt.figure()
+    plt.pie(values_all, labels=labels_all, autopct='%1.1f%%', startangle=90, counterclock=False, colors=colors[:9])
+    plt.axis('equal')
+    if savefigure:
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        out = Path(results_dir) / f"{figurename}_pieH2TopNodes.png"
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        print(f"Figur lagret til {out}")
+    plt.show()
+
+    # ---------------TOP 8 HYDROGEN DEMAND NODES OVER PERIODS-----------------------#
+    Period_hydrogen_demand = (
+        hydrogen_use.groupby(['Node', 'Period'], as_index=False)['Total hydrogen demand [ton]'].sum())
+    Period_hydrogen_demand['Total hydrogen demand [ton]'] = Period_hydrogen_demand[
+                                                                'Total hydrogen demand [ton]'] * seasonScale * 5 / n_scen
+    Period_hydrogen_demand = (
+        Period_hydrogen_demand[Period_hydrogen_demand['Node'].isin(top_8['Node'])].reset_index(drop=True))
+
+    p = (Period_hydrogen_demand
+         .pivot(index='Period', columns='Node', values='Total hydrogen demand [ton]')
+         .sort_index()
+         .reindex(columns=top_8['Node']))  # Mt
+
+    (p / 1e6).plot(marker='o', color=colors[:8], figsize=(12, 8))
+    plt.ylabel('Hydrogen demand M ton', fontsize=16)
+    plt.xlabel('Period', fontsize=16)
+    plt.xticks(rotation=30, ha='right', fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.grid(alpha=0.6, linestyle='--')
+    plt.legend(fontsize=14)
+    plt.tight_layout()
+    if savefigure:
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        out = Path(results_dir) / f"{figurename}_developH2TopNodes.png"
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        print(f"Figur lagret til {out}")
+    plt.show()
+
+    # ---------------------HYDROGEN DEVELOPMENT OVER PERIODS BY SECTOR---------------#
+
+    sectors = ['Hydrogen used for transport [ton]', 'Hydrogen used for oil refining [ton]',
+               'Hydrogen used for ammonia [ton]', 'Hydrogen used for cement [ton]',
+               'Hydrogen burned for power and heat [ton]', 'Hydrogen used for steel [ton]']
+
+    hydrogen_use_sector = (hydrogen_use.groupby(['Period'], as_index=False)[sectors].sum())
+    hydrogen_use_sector[sectors] = hydrogen_use_sector[sectors] * seasonScale * 5 / (n_scen * 1e6)
+    hydrogen_use_sector.sort_values('Period')
+    colors2 = ['palegreen', 'teal', 'gold', 'skyblue', 'orange', 'royalblue']
+
+    plt.figure(figsize=(10, 6))
+    for i, col in enumerate(sectors):
+        plt.plot(hydrogen_use_sector['Period'], hydrogen_use_sector[col], label=col, marker='o', color=colors2[i])
+
+    plt.ylabel('Hydrogen demand M ton', fontsize=16)
+    plt.xlabel('Period', fontsize=16)
+    plt.xticks(rotation=30, ha='right', fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.grid(alpha=0.6, linestyle='--')
+    plt.legend(fontsize=14)
+    plt.tight_layout()
+    if savefigure:
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        out = Path(results_dir) / f"{figurename}_developH2sectors.png"
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        print(f"Figur lagret til {out}")
+    plt.show()
+
+    # --------------------HYDROGEN SECTOR PIE PLOT----------------------#
+
+    hydrogen_use_sector_total = hydrogen_use_sector[sectors].sum()
+    short_labels = [' '.join(i.split()[-2:]) for i in hydrogen_use_sector_total.index]
+    plt.figure(figsize=(8, 8))
+    wedges, texts, autotexts = plt.pie(
+        hydrogen_use_sector_total,
+        labels=None,
+        autopct='%1.1f%%',
+        startangle=90,
+        counterclock=False,
+        colors=colors2,
+        radius=0.9
+    )
+    for t in autotexts:
+        t.set_fontsize(12)
+    plt.legend(
+        wedges,  # bruk wedge-objektene (så fargene matcher)
+        short_labels,
+        fontsize=14,
+        title_fontsize=14,
+        title="Hydrogen used for",
+        loc="lower left",
+        bbox_to_anchor=(0, 0)  # flytt legend ut til høyre
+    )
+    plt.tight_layout()
+    if savefigure:
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        out = Path(results_dir) / f"{figurename}_pieH2sectors.png"
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        print(f"Figur lagret til {out}")
+    plt.show()

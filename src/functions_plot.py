@@ -1087,3 +1087,148 @@ def weather_data_plot(df, scen, country, tech1, tech2=None, tech3=None, savefigu
             plt.savefig(out, format='eps', bbox_inches='tight')
             print(f"Figure saved to {out}")
         plt.show()
+
+from matplotlib.ticker import FuncFormatter
+
+
+from matplotlib.ticker import FuncFormatter
+import matplotlib.patches as mpatches
+
+
+
+from matplotlib.ticker import FuncFormatter
+import matplotlib.patches as mpatches
+
+def plot_top_installed_per_tech(
+    df_or_path,
+    tech,
+    n_top=5,
+    period_col="Period",
+    node_col="Node",
+    tech_col="GeneratorType",
+    installed_col="genInstalledCap_MW",
+    new_col="genInvCap_MW",
+    figsize=(16, 7),
+    group_gap=1.2,
+    bar_width=0.8,
+    new_alpha=0.45,      # transparency for NEW capacity
+    ylim_pad=0.10,       # % headroom above tallest bar
+    savepath=None
+):
+    """Stacked bars per Node (Existing + New), grouped by Period (ticks show only periods)."""
+
+    # Load data
+    df = df_or_path.copy() if isinstance(df_or_path, pd.DataFrame) else pd.read_csv(df_or_path)
+
+    # Ensure numeric
+    for c in (installed_col, new_col):
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+
+    # Compute existing/new
+    df["existing_MW"] = (df[installed_col] - df[new_col]).clip(lower=0)
+    df["new_MW"] = df[new_col]
+
+    # Filter tech
+    work = df[df[tech_col] == tech].copy()
+    if work.empty:
+        raise ValueError(f"No rows found for technology '{tech}'.")
+
+    # Sort periods by start-year
+    work["_period_start"] = work[period_col].astype(str).str.extract(r"(\d{4})").astype(int)
+
+    # Aggregate
+    agg = (work.groupby([period_col, "_period_start", node_col], as_index=False)
+                .agg(installed_MW=(installed_col, "sum"),
+                     existing_MW=("existing_MW", "sum"),
+                     new_MW=("new_MW", "sum")))
+
+    # Top-N per period
+    top_by_period = (agg.sort_values([period_col, "installed_MW"], ascending=[True, False])
+                        .groupby(period_col, group_keys=False)
+                        .head(n_top))
+
+    # Period order
+    period_order = (top_by_period.drop_duplicates([period_col])
+                                  .sort_values("_period_start")[period_col]
+                                  .tolist())
+    if not period_order:
+        raise ValueError("Nothing to plot after filtering and ranking.")
+
+    # Build plotting sequence with grouped x positions
+    records, tick_positions, tick_labels = [], [], []
+    xpos = 0.0
+    for p in period_order:
+        chunk = (top_by_period[top_by_period[period_col] == p]
+                 .sort_values("installed_MW", ascending=False))
+        m = len(chunk)
+        if m == 0:
+            continue
+        xs = xpos + np.arange(m)
+        for x, r in zip(xs, chunk.to_dict("records")):
+            records.append({
+                "x": x,
+                "Period": r[period_col],
+                "Node": r[node_col],
+                "Existing": r["existing_MW"],
+                "New": r["new_MW"],
+                "Installed": r["installed_MW"]
+            })
+        tick_positions.append(xpos + (m - 1) / 2.0)
+        tick_labels.append(p)
+        xpos = xs[-1] + group_gap
+
+    plot_df = pd.DataFrame(records)
+    if plot_df.empty:
+        raise ValueError("No data to plot.")
+
+    # Color by node; same color for both layers (new uses alpha)
+    nodes = list(pd.unique(plot_df["Node"]))
+    cmap = plt.get_cmap("tab20", max(3, len(nodes)))
+    node_to_color = {n: cmap(i) for i, n in enumerate(nodes)}
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for _, row in plot_df.iterrows():
+        color = node_to_color[row["Node"]]
+        # existing (opaque)
+        ax.bar(row["x"], row["Existing"], width=bar_width, color=color, edgecolor="none")
+        # new (transparent on top)
+        ax.bar(row["x"], row["New"], width=bar_width, bottom=row["Existing"],
+               color=color, alpha=new_alpha, edgecolor="none")
+
+    # X axis: periods only
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=0, ha="center")
+
+    # Y axis formatting + headroom
+    ymax = float((plot_df["Existing"] + plot_df["New"]).max())
+    ax.set_ylim(0, (1 + ylim_pad) * ymax if ymax > 0 else 1)
+    ax.set_ylabel("Capacity (MW)")
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, pos: f"{v:,.0f}"))
+
+    ax.set_title(f"{tech}: Existing vs New Capacity — Top {n_top} Nodes per Period")
+    ax.grid(axis="y", linewidth=0.5, alpha=0.3)
+
+    # Light separators between period groups
+    for tp in tick_positions:
+        ax.axvline(tp + (group_gap / 2.0), linestyle=":", linewidth=0.8, color="gray", alpha=0.5)
+
+    # Legends
+    node_handles = [mpatches.Patch(facecolor=node_to_color[n], label=n) for n in nodes]
+    leg1 = ax.legend(handles=node_handles, title="Node",
+                     bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
+
+    '''
+    ax.add_artist(leg1)
+    layer_handles = [
+        mpatches.Patch(facecolor="gray", alpha=1.0, label="Existing"),
+        mpatches.Patch(facecolor="gray", alpha=new_alpha, label="New"),
+    ]
+    ax.legend(handles=layer_handles, title="Layer",
+              bbox_to_anchor=(1.02, 0.74), loc="upper left", frameon=False)
+    '''
+
+    plt.tight_layout()
+    if savepath:
+        plt.savefig(savepath, dpi=300, bbox_inches="tight")
+    return ax

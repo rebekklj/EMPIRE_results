@@ -1098,136 +1098,129 @@ import matplotlib.patches as mpatches
 
 from matplotlib.ticker import FuncFormatter
 import matplotlib.patches as mpatches
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+from itertools import cycle
 
-def plot_top_installed_per_tech(
-    df_or_path,
+
+## Line graph, for installed capacity of chosen technology for top n nodes
+
+from matplotlib.ticker import FuncFormatter
+from itertools import cycle
+import difflib
+
+def plot_insCap_top_nodes(
+    data,
     tech,
-    n_top=5,
+    n_top=10,
+    installed_col="genInstalledCap_MW",
     period_col="Period",
     node_col="Node",
     tech_col="GeneratorType",
-    installed_col="genInstalledCap_MW",
-    new_col="genInvCap_MW",
-    figsize=(16, 7),
-    group_gap=1.2,
-    bar_width=0.8,
-    new_alpha=0.45,      # transparency for NEW capacity
-    ylim_pad=0.10,       # % headroom above tallest bar
+    figsize=(14, 6),
+    linewidth=2.0,
+    marker="o",
+    ylim_pad=0.10,
+    unit="MW",              # "MW" or "GW"
+    colors=None,            # dict | list/tuple | str (colormap name) | None
+    alpha=1.0,
     savepath=None
 ):
-    """Stacked bars per Node (Existing + New), grouped by Period (ticks show only periods)."""
+    # --- Type & column checks ---
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError(
+            f"plot_insCap_top_nodes expects a pandas DataFrame. Got: {type(data)}.\n"
+            "Tip: did you pass a method like `.head` without parentheses?"
+        )
+    required = {installed_col, period_col, node_col, tech_col}
+    missing = [c for c in required if c not in data.columns]
+    if missing:
+        raise KeyError(f"Missing required columns: {missing}. Available: {list(data.columns)}")
 
-    # Load data
-    df = df_or_path.copy() if isinstance(df_or_path, pd.DataFrame) else pd.read_csv(df_or_path)
+    # --- Filter tech *before* conversions ---
+    if tech not in set(data[tech_col].dropna().unique()):
+        choices = data[tech_col].dropna().unique().tolist()
+        suggestion = difflib.get_close_matches(tech, choices, n=1, cutoff=0.0)
+        hint = f" Did you mean: {suggestion[0]!r}?" if suggestion else ""
+        raise ValueError(f"No rows found for technology {tech!r}.{hint}")
 
-    # Ensure numeric
-    for c in (installed_col, new_col):
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    work = data.loc[data[tech_col] == tech, [node_col, period_col, installed_col]].copy()
 
-    # Compute existing/new
-    df["existing_MW"] = (df[installed_col] - df[new_col]).clip(lower=0)
-    df["new_MW"] = df[new_col]
+    # --- Numeric conversion on the filtered subset ---
+    work[installed_col] = pd.to_numeric(work[installed_col], errors="coerce").fillna(0)
 
-    # Filter tech
-    work = df[df[tech_col] == tech].copy()
-    if work.empty:
-        raise ValueError(f"No rows found for technology '{tech}'.")
-
-    # Sort periods by start-year
+    # --- Chronological order for periods ---
     work["_period_start"] = work[period_col].astype(str).str.extract(r"(\d{4})").astype(int)
 
-    # Aggregate
-    agg = (work.groupby([period_col, "_period_start", node_col], as_index=False)
-                .agg(installed_MW=(installed_col, "sum"),
-                     existing_MW=("existing_MW", "sum"),
-                     new_MW=("new_MW", "sum")))
+    # Aggregate Node × Period (sum)
+    agg = work.groupby([node_col, period_col], as_index=False)[installed_col].sum()
 
-    # Top-N per period
-    top_by_period = (agg.sort_values([period_col, "installed_MW"], ascending=[True, False])
-                        .groupby(period_col, group_keys=False)
-                        .head(n_top))
+    period_order = (work[[period_col, "_period_start"]]
+                    .drop_duplicates()
+                    .sort_values("_period_start")[period_col]
+                    .tolist())
 
-    # Period order
-    period_order = (top_by_period.drop_duplicates([period_col])
-                                  .sort_values("_period_start")[period_col]
-                                  .tolist())
-    if not period_order:
-        raise ValueError("Nothing to plot after filtering and ranking.")
+    pivot = (agg.pivot(index=period_col, columns=node_col, values=installed_col)
+               .reindex(period_order)
+               .fillna(0))
+    if pivot.empty:
+        raise ValueError("Nothing to plot after aggregation.")
 
-    # Build plotting sequence with grouped x positions
-    records, tick_positions, tick_labels = [], [], []
-    xpos = 0.0
-    for p in period_order:
-        chunk = (top_by_period[top_by_period[period_col] == p]
-                 .sort_values("installed_MW", ascending=False))
-        m = len(chunk)
-        if m == 0:
-            continue
-        xs = xpos + np.arange(m)
-        for x, r in zip(xs, chunk.to_dict("records")):
-            records.append({
-                "x": x,
-                "Period": r[period_col],
-                "Node": r[node_col],
-                "Existing": r["existing_MW"],
-                "New": r["new_MW"],
-                "Installed": r["installed_MW"]
-            })
-        tick_positions.append(xpos + (m - 1) / 2.0)
-        tick_labels.append(p)
-        xpos = xs[-1] + group_gap
+    # Top N nodes by total installed across all periods
+    top_nodes = pivot.sum(axis=0).sort_values(ascending=False).head(n_top).index.tolist()
+    pivot_top = pivot[top_nodes]
 
-    plot_df = pd.DataFrame(records)
-    if plot_df.empty:
-        raise ValueError("No data to plot.")
+    # Scale to GW if requested
+    unit = unit.upper()
+    scale = 1.0 if unit == "MW" else 1/1000 if unit == "GW" else 1.0
+    pivot_top = pivot_top * scale
+    yfmt = (lambda v, pos: f"{v:,.1f}") if unit == "GW" else (lambda v, pos: f"{v:,.0f}")
 
-    # Color by node; same color for both layers (new uses alpha)
-    nodes = list(pd.unique(plot_df["Node"]))
-    cmap = plt.get_cmap("tab20", max(3, len(nodes)))
-    node_to_color = {n: cmap(i) for i, n in enumerate(nodes)}
+    # Colors per node
+    node_to_color = {}
+    if colors is None:
+        cmap = plt.get_cmap("tab10" if len(top_nodes) <= 10 else "tab20", len(top_nodes))
+        for i, n in enumerate(top_nodes): node_to_color[n] = cmap(i)
+    elif isinstance(colors, dict):
+        cmap = plt.get_cmap("tab10" if len(top_nodes) <= 10 else "tab20", len(top_nodes))
+        for i, n in enumerate(top_nodes): node_to_color[n] = colors.get(n, cmap(i))
+    elif isinstance(colors, (list, tuple)):
+        cyc = cycle(colors)
+        for n in top_nodes: node_to_color[n] = next(cyc)
+    elif isinstance(colors, str):
+        cmap = plt.get_cmap(colors, len(top_nodes))
+        for i, n in enumerate(top_nodes): node_to_color[n] = cmap(i)
+    else:
+        raise ValueError("`colors` must be dict, list/tuple, str (colormap), or None.")
 
+    # Plot
     fig, ax = plt.subplots(figsize=figsize)
+    for n in top_nodes:
+        ax.plot(
+            pivot_top.index,
+            pivot_top[n].values,
+            label=n,
+            linewidth=linewidth,
+            marker=marker,
+            color=node_to_color[n],
+            alpha=alpha,
+        )
 
-    for _, row in plot_df.iterrows():
-        color = node_to_color[row["Node"]]
-        # existing (opaque)
-        ax.bar(row["x"], row["Existing"], width=bar_width, color=color, edgecolor="none")
-        # new (transparent on top)
-        ax.bar(row["x"], row["New"], width=bar_width, bottom=row["Existing"],
-               color=color, alpha=new_alpha, edgecolor="none")
+    ax.set_title(f"{tech}: Installed Capacity per Period — Top {len(top_nodes)} Nodes")
+    ax.set_xlabel("Period")
+    ax.set_ylabel(f"Installed capacity ({unit})")
+    ax.grid(True, axis="both", linewidth=0.5, alpha=0.3)
 
-    # X axis: periods only
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(tick_labels, rotation=0, ha="center")
-
-    # Y axis formatting + headroom
-    ymax = float((plot_df["Existing"] + plot_df["New"]).max())
+    ymax = float(pivot_top.values.max())
     ax.set_ylim(0, (1 + ylim_pad) * ymax if ymax > 0 else 1)
-    ax.set_ylabel("Capacity (MW)")
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, pos: f"{v:,.0f}"))
+    ax.yaxis.set_major_formatter(FuncFormatter(yfmt))
 
-    ax.set_title(f"{tech}: Existing vs New Capacity — Top {n_top} Nodes per Period")
-    ax.grid(axis="y", linewidth=0.5, alpha=0.3)
+    ax.set_xticks(np.arange(len(pivot_top.index)))
+    ax.set_xticklabels(pivot_top.index, rotation=0, ha="center")
 
-    # Light separators between period groups
-    for tp in tick_positions:
-        ax.axvline(tp + (group_gap / 2.0), linestyle=":", linewidth=0.8, color="gray", alpha=0.5)
-
-    # Legends
-    node_handles = [mpatches.Patch(facecolor=node_to_color[n], label=n) for n in nodes]
-    leg1 = ax.legend(handles=node_handles, title="Node",
-                     bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
-
-    '''
-    ax.add_artist(leg1)
-    layer_handles = [
-        mpatches.Patch(facecolor="gray", alpha=1.0, label="Existing"),
-        mpatches.Patch(facecolor="gray", alpha=new_alpha, label="New"),
-    ]
-    ax.legend(handles=layer_handles, title="Layer",
-              bbox_to_anchor=(1.02, 0.74), loc="upper left", frameon=False)
-    '''
-
+    ax.legend(title="Node", bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
     plt.tight_layout()
     if savepath:
         plt.savefig(savepath, dpi=300, bbox_inches="tight")

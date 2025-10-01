@@ -3,8 +3,7 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-
-from functions_plot import Expected_annual_production, plot_top_map, P_prodVSimport_piechart, Plot_Installed_capacity_per_tech_split,HydrogenProd_piechart, Yearly_hydrogenProd_perTech, plot_top_installed_per_tech
+from src.functions_plot import (Expected_annual_production, plot_top_map, P_prodVSimport_piechart, Plot_Installed_capacity_per_tech_split,HydrogenProd_piechart, Yearly_hydrogenProd_perTech, plot_insCap_top_nodes)
 
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
@@ -65,9 +64,16 @@ hydrogen_production=pd.read_csv(result_dir/ 'results_hydrogen_production.csv')
 '''
 Yearly_hydrogenProd_perTech(hydrogen_production, n_hours=12, n_scen = 2 , x1='PEM production [ton]', x2="ALK production [ton]", x3='SOEC production [ton]', x4='Reformer production [ton]')
 '''
-el_gen_inv = result_dir/'results_elec_generation_inv.csv'
-plot_top_installed_per_tech(el_gen_inv, tech='Windonshore', n_top=5)
-plt.show()
+
+### Line graph of installed capacity of chosen technology/generator for top n nodes
 
 
+palette = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e",
+           "#e6ab02", "#a6761d", "#666666", "#1f78b4", "#b2df8a"]
+el_gen_inv = pd.read_csv(result_dir/'results_elec_generation_inv.csv')
+
+plot_insCap_top_nodes(el_gen_inv,tech="Solar", n_top=5, unit="GW", savepath=plot_dir /"pv_inscap.png", colors=palette)
+#plt.show()
+
+#
 

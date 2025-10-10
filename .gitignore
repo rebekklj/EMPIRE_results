@@ -9,7 +9,5 @@ data/
 
 .idea/
 *.iml
-.venv/
-_pycache_/
-*.pyc
+
 

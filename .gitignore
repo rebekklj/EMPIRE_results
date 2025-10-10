@@ -6,3 +6,7 @@ data/
 *.npz
 *.zip
 *.gz
+
+.idea/
+*.xml
+*.iml

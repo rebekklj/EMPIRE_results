@@ -6,3 +6,10 @@ data/
 *.npz
 *.zip
 *.gz
+
+.idea/
+*.iml
+.venv/
+_pycache_/
+*.pyc
+

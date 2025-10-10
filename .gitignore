@@ -8,5 +8,8 @@ data/
 *.gz
 
 .idea/
-*.xml
 *.iml
+.venv/
+_pycache_/
+*.pyc
+

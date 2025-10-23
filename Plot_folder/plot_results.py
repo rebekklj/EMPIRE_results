@@ -1,4 +1,3 @@
-# Plot_folder/plot_results.py
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,12 +8,12 @@ from functions_plot import Expected_annual_production, plot_top_map, P_prodVSimp
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir = data_dir / "Results_w_el_demand" / "full_model_base"
-plot_dir = data_dir / "Results_w_el_demand" #lagrer figurene i resultat mappen
+result_dir = data_dir / "Results_BalanceC8_trans" / "full_model_base"
+plot_dir = data_dir / "Results_BalanceC8_trans" #lagrer figurene i resultat mappen
 plot_dir.mkdir(exist_ok=True)
 
-Lagre_figurer =False
-figurnavn = "wElDemand"
+Lagre_figurer =True
+figurnavn = "BalanceCosts8_trans"
 
 # In[]
 

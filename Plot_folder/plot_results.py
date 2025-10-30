@@ -8,15 +8,15 @@ from functions_plot import Expected_annual_production, plot_top_map, P_prodVSimp
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir = data_dir / "Results_BalanceC8_trans" / "full_model_base"
-plot_dir = data_dir / "Results_BalanceC8_trans" #lagrer figurene i resultat mappen
+result_dir = data_dir / "Results_PEM_types2" / "full_model_base"
+plot_dir = data_dir / "Results_PEM_types2" #lagrer figurene i resultat mappen
 plot_dir.mkdir(exist_ok=True)
 
 Lagre_figurer =True
-figurnavn = "BalanceCosts8_trans"
+figurnavn = "PEM_types"
 
 # In[]
-
+"""
 Elec_generation_inv = pd.read_csv(result_dir / "results_elec_generation_inv.csv")
 
 Expected_annual_production(
@@ -34,19 +34,21 @@ Plot_Installed_capacity_per_tech_split(Europe_summary,
                                            figsize=(18, 12),
                                            savefigure=Lagre_figurer,
                                            figurename=figurnavn, results_dir=plot_dir)
-
+"""
 # In[]
+"""
 Power_balance= pd.read_csv(result_dir / "results_power_balance.csv")
 
 P_prodVSimport_piechart(Power_balance, 12, 2, savefigure=Lagre_figurer, figurename=figurnavn, results_dir=plot_dir)
 
 plot_top_map(Elec_generation_inv,3,savefigure=Lagre_figurer, figurename=figurnavn, results_dir=plot_dir)
-
+"""
 # In[]
 hydrogen_production=pd.read_csv(result_dir/ 'results_hydrogen_production.csv')
 HydrogenProd_piechart(hydrogen_production, 12, 2, savefigure=Lagre_figurer, figurename=figurnavn, results_dir=plot_dir)
 
 # In[]
+"""
 Power_balance['Power reformer plant [MWh]']=Power_balance['Power reformer plant [MWh]']*(-1)
 plot_power_demand(Power_balance,n_hours=12)
 
@@ -55,7 +57,7 @@ hydrogen_use=pd.read_csv(result_dir/ 'results_hydrogen_use.csv')
 
 plot_hydrogen_use(hydrogen_use, 12, 2, savefigure=False, figurename=None, results_dir=None)
 
-
+"""
 
 
 

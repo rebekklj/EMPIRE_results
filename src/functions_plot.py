@@ -467,17 +467,19 @@ def plot_power_demand(
     plt.show()
 
 
-def transmission_map(df, savefigure=False, figurename=None, results_dir=None):
+def transmission_map(df,columnname,color,n_hours,n_scen, savefigure=False, figurename=None, results_dir=None):
     # === 2. Lag retningsuavhengige nodepar ===
-    df["node_pair"] = df.apply(lambda row: tuple(sorted([row["FromNode"], row["ToNode"]])), axis=1)
+    df["node_pair"] = df.apply(lambda row: tuple(sorted([row["Between node"], row["And node"]])), axis=1)
 
     # === 3. Summer total flyt for hver nodekombinasjon og del på 2 (scenario-vektet) ===
     df_sum = (
-        df.groupby("node_pair")["TransmissionReceived_MW"]
+        df.groupby("node_pair")[columnname]
         .sum()
-        .div(2)  # for 2 like vektede scenarier
         .reset_index()
     )
+
+    eps = 1e-12  # terskel for "praktisk talt null"
+    df_sum = df_sum[df_sum[columnname] > eps]  # behold bare positive flyter
 
     # === 4. Definer (forenklede) koordinater for nodene ===
     node_coords = {
@@ -526,7 +528,7 @@ def transmission_map(df, savefigure=False, figurename=None, results_dir=None):
         if coord1 and coord2:
             lines.append({
                 "coords": [coord1, coord2],
-                "value": row["TransmissionReceived_MW"],
+                "value": row[columnname],
                 "nodes": f"{node1}–{node2}"
             })
 
@@ -545,9 +547,9 @@ def transmission_map(df, savefigure=False, figurename=None, results_dir=None):
     # ax.gridlines(draw_labels=False)
 
     # === Diskretisering i 5 tykkelsesnivåer ===
-    max_val = 16879307.31535903
+    max_val = max(df_sum[columnname])
     bins = [0, 0.25, 0.5, 0.75, 1.0]  # proporsjoner av max
-    widths = [1, 7, 14, 21]  # tykkelser du ønsker
+    widths = [2, 7, 14, 21]  # tykkelser du ønsker
     labels = []
 
     # Tegn kraftlinjer med diskrete nivåer
@@ -561,20 +563,25 @@ def transmission_map(df, savefigure=False, figurename=None, results_dir=None):
         else:
             lw = widths[-1]  # fallback
         l["linewidth"] = lw
-        ax.plot(xs, ys, color='firebrick', linewidth=lw, alpha=0.5, transform=ccrs.PlateCarree())
+        ax.plot(xs, ys, color=color, linewidth=lw, alpha=0.5, transform=ccrs.PlateCarree())
 
     # === Forklaringsboks for tykkelse → kraftmengde ===
     legend_lines = []
     for i in range(len(widths)):
-        val = (bins[i + 1]) * max_val
-        label = f"{val / 1000:.0f} GW"  # konverter fra MW til GW
+        lower_val = bins[i] * max_val
+        if lower_val ==0:
+            lower_val = df_sum.loc[df_sum[columnname] > 0, columnname].min()
+
+        upper_val = bins[i + 1] * max_val
+
+        label = f"{lower_val:.0f} - {upper_val:.0f} ton/hr "  # konverter fra MW til GW
         legend_lines.append(
-            mlines.Line2D([], [], color='firebrick', linewidth=widths[i], label=label)
+            mlines.Line2D([], [], color=color, linewidth=widths[i], label=label)
         )
 
     ax.legend(
         handles=legend_lines,
-        title="Transmission flow",
+        title="Pipeline capacity",
         loc="upper left",
         frameon=True,
         labelspacing=1.5,
@@ -909,7 +916,7 @@ def plot_top_map(
 
 def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None, results_dir=None):
     # ---- 0) Sjekk/konverter kolonner ----
-    required_cols = ["Node", "PEM production [ton]", "ALK production [ton]", "SOEC production [ton]",
+    required_cols = ["Node", "PEM_blue production [ton]","PEM_green production [ton]","PEM_grey production [ton]", "ALK production [ton]", "SOEC production [ton]",
                      "Reformer production [ton]"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
@@ -978,7 +985,7 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
     summary = summary.loc[keep].copy()
 
     # Total
-    part_cols = ["PEM production [ton]", "ALK production [ton]", "SOEC production [ton]", "Reformer production [ton]"]
+    part_cols = ["PEM_blue production [ton]","PEM_green production [ton]","PEM_grey production [ton]", "ALK production [ton]", "SOEC production [ton]", "Reformer production [ton]"]
     summary["total"] = summary[part_cols].sum(axis=1)
 
     if summary.empty or summary["total"].sum() == 0:
@@ -1021,7 +1028,7 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
             return (r_min + r_max) / 2
         return r_min + np.sqrt(total / tmax) * (r_max - r_min)
 
-    colors = ("steelblue", "plum", "rebeccapurple", "grey")
+    colors = ("steelblue","seagreen","dimgrey", "plum", "rebeccapurple", "darkgrey")
 
     # ---- 6) Tegn pie for hvert land ----
     for node, row in summary.iterrows():
@@ -1032,10 +1039,12 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
     # ---- 7) Legende ----
     from matplotlib.lines import Line2D
     legend_elems = [
-        Line2D([0], [0], marker='o', color='w', label='PEM', markerfacecolor=colors[0], markersize=12),
-        Line2D([0], [0], marker='o', color='w', label='Alkaline', markerfacecolor=colors[1], markersize=12),
-        Line2D([0], [0], marker='o', color='w', label='SOEC', markerfacecolor=colors[2], markersize=12),
-        Line2D([0], [0], marker='o', color='w', label='Reformer', markerfacecolor=colors[3], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='PEM_blue', markerfacecolor=colors[0], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='PEM_green', markerfacecolor=colors[1], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='PEM_grey', markerfacecolor=colors[2], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='Alkaline', markerfacecolor=colors[3], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='SOEC', markerfacecolor=colors[4], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='Reformer', markerfacecolor=colors[5], markersize=12),
     ]
     ax.legend(handles=legend_elems, loc="upper left", title="Hydrogen technology", fontsize=19, title_fontsize=22)
 

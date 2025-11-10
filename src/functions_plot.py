@@ -12,7 +12,8 @@ from shapely.geometry import LineString
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from matplotlib.patches import Wedge, Circle
-
+from typing import Union, Tuple
+from itertools import cycle
 # ------------------PLOTTING AV INSTALLERT KAPASITET PER STØRSTE TEKNOLOGIER--------------------------------
 
 def Plot_Installed_capacity_per_tech_split(df,
@@ -1286,3 +1287,263 @@ def plot_hydrogen_use(hydrogen_use, n_hours, n_scen, savefigure=False, figurenam
         plt.savefig(out, dpi=300, bbox_inches='tight')
         print(f"Figur lagret til {out}")
     plt.show()
+
+
+
+# Function making a new folder with csv, summarizing the amount of
+# hydrogen sent from/to node for each period and power consumed in node for transport
+# and 2 figures of top5 importers and exportes of hydroge per period
+
+def make_pipeline_summary(
+        csv_path: Union[str, Path],
+        n_hours: int,
+        output_dir: Union[str, Path] = None,
+        export_color_map: dict | None = None,
+        import_color_map: dict | None = None,
+        color_cycle: list[str] | None = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Build a per-period pipeline summary.
+
+    Parameters
+    ----------
+    csv_path : str | Path
+        Path to the input CSV with columns at least:
+        ['From node','To node','Period','Hour','Scenario',
+         'Hydrogen sent [ton]','Power consumed in each node for transport (MWh)'].
+    n_hours : int
+        Number of sampled hours per season used in the model.
+        Used in the season scaling factor:
+            seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
+    output_path : str | Path, default "pipeline_summary.csv"
+        Path to write the summarized CSV.
+
+    Returns
+    -------
+    pd.DataFrame
+        A wide dataframe with:
+        ['From node','To node', 'Period, 'Hydrogen sent [ton]','Power consumed in each node for transport (MWh)']
+        where each period gets its own column for hydrogen and power.
+    """
+    csv_path = Path(csv_path)
+    df = pd.read_csv(csv_path)
+
+    # Season scaling
+    season_scale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
+
+    # Aggregate by From/To/Period across all hours/seasons/scenarios/gas-scenarios
+    sum_cols = ["Hydrogen sent [ton]", "Power consumed in each node for transport (MWh)"]
+    g = (
+        df.groupby(["From node", "To node", "Period"], as_index=False)[sum_cols]
+          .sum()
+    )
+
+    # Apply: divide by 2 (two equally probable scenarios) and season scale
+    scale_factor = season_scale / 2.0
+    for c in sum_cols:
+        g[c] = g[c] * scale_factor
+
+
+    # Compute export/import per node and period
+    export = (
+        g.groupby(["From node", "Period"], as_index=False)["Hydrogen sent [ton]"]
+        .sum()
+        .rename(columns={"From node": "Node", "Hydrogen sent [ton]": "Export [ton]"})
+    )
+
+    imp = (
+        g.groupby(["To node", "Period"], as_index=False)["Hydrogen sent [ton]"]
+        .sum()
+        .rename(columns={"To node": "Node", "Hydrogen sent [ton]": "Import [ton]"})
+    )
+
+    # Merge export and import
+    node_balance = pd.merge(export, imp, on=["Node", "Period"], how="outer").fillna(0)
+    node_balance["Net export [ton]"] = node_balance["Export [ton]"] - node_balance["Import [ton]"]
+
+
+    # Top-5 trading routes per period (by H2 volume)
+    # Add period totals to compute shares
+    period_totals = g.groupby("Period", as_index=False)["Hydrogen sent [ton]"].sum().rename(
+        columns={"Hydrogen sent [ton]": "Period total [ton]"}
+    )
+    g_with_total = g.merge(period_totals, on="Period", how="left")
+    g_with_total["Share of period [%]"] = (
+        (g_with_total["Hydrogen sent [ton]"] / g_with_total["Period total [ton]"]) * 100.0
+    )
+
+    # Rank within each period and take top 5
+    g_with_total = g_with_total.sort_values(
+        ["Period", "Hydrogen sent [ton]"], ascending=[True, False]
+    )
+    g_with_total["Rank in period"] = (
+        g_with_total.groupby("Period")["Hydrogen sent [ton]"]
+        .rank(method="first", ascending=False)
+        .astype(int)
+    )
+    top5_trades = g_with_total[g_with_total["Rank in period"] <= 5].reset_index(drop=True)
+
+    # Sort for readability
+    pipeline_summary = g.sort_values(["From node", "To node", "Period"]).reset_index(drop=True)
+    node_balance = node_balance.sort_values(["Node", "Period"]).reset_index(drop=True)
+    top5_trades = top5_trades.sort_values(["Period", "Rank in period"]).reset_index(drop=True)
+
+    # Output paths
+    outdir = Path(output_dir) if output_dir is not None else csv_path.parent.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    path_summary = outdir / "pipeline_summary.csv"
+    path_node = outdir / "pipeline_node_balance.csv"
+    path_top5 = outdir / "pipeline_top5_trades.csv"
+    fig_exporters = outdir / "top5_exporters_per_period.png"
+    fig_importers = outdir / "top5_importers_per_period.png"
+
+
+    # Write CSVs
+    pipeline_summary.to_csv(path_summary, index=False)
+    node_balance.to_csv(path_node, index=False)
+    top5_trades.to_csv(path_top5, index=False)
+
+    # ---------- PLOTS ----------
+
+    def make_color_map(nodes, override_map=None, cycle_colors=None):
+        """
+        Build a stable color map for nodes.
+        - override_map: dict node->color has priority
+        - cycle_colors: fallback palette (list of colors). If None, use mpl default cycle.
+        """
+        cmap = {}
+        if override_map is None:
+            override_map = {}
+        if cycle_colors is None or len(cycle_colors) == 0:
+            base = plt.rcParams['axes.prop_cycle'].by_key().get('color', [])
+        else:
+            base = list(cycle_colors)
+        cy = cycle(base if base else ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
+        for n in sorted(nodes):
+            if n in override_map and override_map[n]:
+                cmap[n] = override_map[n]
+            else:
+                cmap[n] = next(cy)
+        return cmap
+
+    # Period order
+    periods = sorted(export["Period"].unique())
+    ypos = np.arange(len(periods))
+    bars_per_period = 5
+    bar_height = 0.13
+    offsets = np.linspace(-(bars_per_period - 1) / 2, (bars_per_period - 1) / 2, bars_per_period) * bar_height
+
+    # ----------------- TOP 5 EXPORTERS (horizontal grouped bars) -----------------
+    # Build top-5 table
+    top5_exporters_per_period = []
+    for p in periods:
+        ex_p = export[export["Period"] == p].sort_values("Export [ton]", ascending=False).head(5)
+        if len(ex_p) < 5:
+            ex_p = pd.concat([ex_p,
+                              pd.DataFrame({"Node": [""] * (5 - len(ex_p)),
+                                            "Period": [p] * (5 - len(ex_p)),
+                                            "Export [ton]": [0.0] * (5 - len(ex_p))})],
+                             ignore_index=True)
+        top5_exporters_per_period.append(ex_p.assign(_rank=range(5)))
+    top5_exporters_tbl = pd.concat(top5_exporters_per_period, ignore_index=True)
+
+    # Colors: consistent by node across all periods
+    export_nodes = set(top5_exporters_tbl["Node"].unique()) - {""}
+    export_cmap = make_color_map(export_nodes, override_map=export_color_map, cycle_colors=color_cycle)
+
+    fig = plt.figure(figsize=(max(12, len(periods) * 1.2), 10)) # 8 og 6
+    ax = plt.gca()
+
+    for k, off in enumerate(offsets):
+        # values and nodes for bar group k across periods
+        xvals = []
+        nodes_k = []
+        for p in periods:
+            row = top5_exporters_tbl[(top5_exporters_tbl["Period"] == p) & (top5_exporters_tbl["_rank"] == k)]
+            val_ton = float(row["Export [ton]"].iloc[0]) if not row.empty else 0.0
+            val_mt = val_ton * 1e-6  # tons -> Mt
+            node_name = str(row["Node"].iloc[0]) if not row.empty else ""
+            xvals.append(val_mt)
+            nodes_k.append(node_name)
+        y = ypos + off
+        bar_colors = [export_cmap.get(n, None) for n in nodes_k]
+        bars = ax.barh(y, xvals, height=bar_height, color=bar_colors)
+
+        # Label bars with node names at the end of each bar (if > 0)
+        for bx, by, n in zip(xvals, y, nodes_k):
+            if n and bx > 0:
+                ax.text(bx, by, f"  {n}", va='center', ha='left', fontsize=13) # 8
+
+    # Axes/labels
+    ax.set_yticks(ypos)
+    ax.set_yticklabels(periods, fontsize= 13)
+    ax.set_xlabel("Hydrogen exported [Mt]", fontsize=18)
+
+    # Keep x and y axis lines (spines); hide top/right only
+    ax.spines['left'].set_visible(True)
+    ax.spines['bottom'].set_visible(True)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    # Optional: light grid to help reading amounts (keeps axis lines)
+    ax.grid(axis='x', linestyle=':', linewidth=0.7, alpha=0.6)
+    ax.tick_params(axis='both', length=4)
+
+    plt.tight_layout()
+    plt.savefig(fig_exporters, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+    # ----------------- TOP 5 IMPORTERS (horizontal grouped bars) -----------------
+    top5_importers_per_period = []
+    for p in periods:
+        im_p = imp[imp["Period"] == p].sort_values("Import [ton]", ascending=False).head(5)
+        if len(im_p) < 5:
+            im_p = pd.concat([im_p,
+                              pd.DataFrame({"Node": [""] * (5 - len(im_p)),
+                                            "Period": [p] * (5 - len(im_p)),
+                                            "Import [ton]": [0.0] * (5 - len(im_p))})],
+                             ignore_index=True)
+        top5_importers_per_period.append(im_p.assign(_rank=range(5)))
+    top5_importers_tbl = pd.concat(top5_importers_per_period, ignore_index=True)
+
+    import_nodes = set(top5_importers_tbl["Node"].unique()) - {""}
+    import_cmap = make_color_map(import_nodes, override_map=import_color_map, cycle_colors=color_cycle)
+
+    fig = plt.figure(figsize=(max(12, len(periods) * 1.2), 10)) # 8 og 6
+    ax = plt.gca()
+
+    for k, off in enumerate(offsets):
+        xvals = []
+        nodes_k = []
+        for p in periods:
+            row = top5_importers_tbl[(top5_importers_tbl["Period"] == p) & (top5_importers_tbl["_rank"] == k)]
+            val_ton = float(row["Import [ton]"].iloc[0]) if not row.empty else 0.0
+            val_mt = val_ton * 1e-6
+            node_name = str(row["Node"].iloc[0]) if not row.empty else ""
+            xvals.append(val_mt)
+            nodes_k.append(node_name)
+        y = ypos + off
+        bar_colors = [import_cmap.get(n, None) for n in nodes_k]
+        bars = ax.barh(y, xvals, height=bar_height, color=bar_colors)
+
+        for bx, by, n in zip(xvals, y, nodes_k): # node names at end of bars
+            if n and bx > 0:
+                ax.text(bx, by, f"  {n}", va='center', ha='left', fontsize=13) #8
+
+    ax.set_yticks(ypos)
+    ax.set_yticklabels(periods, fontsize= 13)
+    ax.set_xlabel("Hydrogen imported [Mt]", fontsize= 18)
+
+    ax.spines['left'].set_visible(True)
+    ax.spines['bottom'].set_visible(True)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(axis='x', linestyle=':', linewidth=0.7, alpha=0.6)
+    ax.tick_params(axis='both', length=4)
+
+    plt.tight_layout()
+    plt.savefig(fig_importers, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    # ---------- /PLOTS ----------
+
+    return pipeline_summary, node_balance, top5_trades

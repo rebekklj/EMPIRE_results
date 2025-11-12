@@ -10,15 +10,15 @@ from src.functions_plot import Expected_annual_production, plot_top_map, P_prodV
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir = data_dir / "Results_PEM_types2_0611" / "Results_PEM_types2" /"full_model_base"
-plot_dir = data_dir / "Results_PEM_types2_0611" #lagrer figurene i resultat mappen
+result_dir = data_dir / "Results_reformerinitcap_1111" /"full_model_base"
+plot_dir = data_dir / "Results_reformerinitcap_1111" #lagrer figurene i resultat mappen
 plot_dir.mkdir(exist_ok=True)
 
 Lagre_figurer =False
-figurnavn = "0611"
+figurnavn = "reformerInitCap"
 
 # In[]
-
+'''
 Elec_generation_inv = pd.read_csv(result_dir / "results_elec_generation_inv.csv")
 
 Expected_annual_production(
@@ -56,7 +56,7 @@ plot_power_demand(Power_balance,n_hours=12)
 hydrogen_use=pd.read_csv(result_dir/ 'results_hydrogen_use.csv')
 
 plot_hydrogen_use(hydrogen_use, 12, 2, savefigure=False, figurename=None, results_dir=None)
-
+'''
 # Pipeline csv and plots
 palette = ['orchid','teal', 'darkseagreen',
             'khaki', 'plum', 'darkslateblue',

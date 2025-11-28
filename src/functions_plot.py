@@ -309,6 +309,228 @@ def Yearly_hydrogenProd_perTech(
         print(f'Figure saved to {figpath}')
     plt.show()
 
+def plot_OBJ_generator_inv(Gen_op, Gen_inv, H2_inv, Stor_el, Trans_inv, n_scen):
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    # --- Kostnader per periode ---
+
+    gen_op_period = (
+        Gen_op.groupby("Period")["OperationalCost_Euro"].sum() / (n_scen * 10**9)
+    )
+
+    gen_inv_period = (
+        Gen_inv.groupby("Period")["genInvestedCost_Euro"].sum() / 10**9
+    )
+
+    h2_prod_period = (
+        H2_inv.groupby("Period")[
+            [
+                'Discounted PEM_yellow cost [EUR]',
+                'Discounted PEM_green cost [EUR]',
+                'Discounted ALK cost [EUR]',
+                'Discounted SOEC cost [EUR]',
+                'Discounted Reformer cost [EUR]'
+            ]
+        ].sum().sum(axis=1) / 10**9
+    )
+
+    h2_pipe_period = (
+        H2_inv.groupby("Period")['Discounted pipeline cost [EUR]'].sum() / 10**9
+    )
+
+    h2_stor_period = (
+        H2_inv.groupby("Period")['Discounted storage cost [EUR]'].sum() / 10**9
+    )
+
+    pstor_period = (
+        Stor_el.groupby("Period")['storInvestedCost_Euro'].sum() / 10**9
+    )
+
+    ptrans_period = (
+        Trans_inv.groupby("Period")['transmissionInvestedCost_Euro'].sum() / 10**9
+    )
+
+    df = pd.DataFrame({
+        "Generator operational": gen_op_period,
+        "Generator investment": gen_inv_period,
+        "Hydrogen production inv.": h2_prod_period,
+        "Hydrogen pipeline inv.": h2_pipe_period,
+        "Hydrogen storage inv.": h2_stor_period,
+        "Power storage inv.": pstor_period,
+        "Power transmission inv.": ptrans_period
+    }).fillna(0)
+
+
+
+    periods = ["2020-2025", "2025-2030", "2030-2035", "2035-2040",
+               "2040-2045", "2045-2050",'2050-2055']
+    n_periods = len(periods)
+
+    df = df.reindex(periods).fillna(0)
+
+    # Prosentandel per periode
+    row_sum = df.sum(axis=1).replace(0, np.nan)
+    df_pct = df.div(row_sum, axis=0) * 100
+
+    colors = [
+        "teal",
+        "darkturquoise",
+        "orange",
+        "yellowgreen",
+        "plum",
+        "hotpink",
+        "darkslategrey"
+    ]
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # Bruk rene numeriske x-posisjoner
+    x = np.arange(n_periods)
+    bottom = np.zeros(n_periods)
+
+    for col, color in zip(df.columns, colors):
+        values = df[col].values
+        pct_values = df_pct[col].values
+
+        ax.bar(x, values, bottom=bottom, color=color, label=col)
+
+        # Tekst inni segmentene
+        for i, (v, b, p) in enumerate(zip(values, bottom, pct_values)):
+            if v > 0 and not np.isnan(p):
+                if p >= 2:
+                    ax.text(
+                        x=i,
+                        y=b + v / 2,
+                        s=f"{v:.0f}",
+                        ha='center',
+                        va='center',
+                        fontsize=14,
+                        color="white"
+                    )
+
+        bottom += values
+
+    # Kun perioder som xticklabels, rotert 30°
+    ax.set_xticks(x)
+    ax.set_xticklabels(periods, rotation=30, ha="right")
+    ax.tick_params(axis='y', labelsize=14)
+    ax.tick_params(axis='x', labelsize=14)
+
+    ax.set_xlabel("Period",fontsize=16)
+    ax.set_ylabel("Objective cost components [bn EUR]",fontsize=16)
+    ax.legend(loc="upper right",fontsize=14)
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_H2_costs_per_period(H2_inv):
+
+
+    Pem_yellow_inv = (
+        H2_inv.groupby("Period")['Discounted PEM_yellow cost [EUR]'].sum() / 10**9
+    )
+
+    Pem_green_inv = (
+        H2_inv.groupby("Period")['Discounted PEM_green cost [EUR]'].sum() / 10**9
+    )
+
+    ALK_inv = (
+        H2_inv.groupby("Period")['Discounted ALK cost [EUR]'].sum() / 10**9
+    )
+
+    SOEC_inv = (
+        H2_inv.groupby("Period")['Discounted SOEC cost [EUR]'].sum() / 10**9
+    )
+
+    Reformer_inv = (
+        H2_inv.groupby("Period")['Discounted Reformer cost [EUR]'].sum() / 10**9
+    )
+
+    h2_pipe_period = (
+        H2_inv.groupby("Period")['Discounted pipeline cost [EUR]'].sum() / 10**9
+    )
+
+    h2_stor_period = (
+        H2_inv.groupby("Period")['Discounted storage cost [EUR]'].sum() / 10**9
+    )
+
+    # --- Samle i DataFrame ---
+    df = pd.DataFrame({
+        "PEM yellow": Pem_yellow_inv,
+        "PEM green": Pem_green_inv,
+        "ALK": ALK_inv,
+        "SOEC": SOEC_inv,
+        "Reformer": Reformer_inv,
+        "Pipeline": h2_pipe_period,
+        "Storage": h2_stor_period
+    }).fillna(0)
+
+    # --- Sorter ønsket periode-rekkefølge ---
+    periods = ["2020-2025", "2025-2030", "2030-2035",
+               "2035-2040", "2040-2045", "2045-2050"]
+
+    df = df.reindex(periods).fillna(0)
+
+    # --- Prosentandel per periode ---
+    row_sum = df.sum(axis=1).replace(0, np.nan)
+    df_pct = df.div(row_sum, axis=0) * 100
+
+    # --- Farger ---
+    colors = [
+        "teal",
+        "steelblue",
+        "orange",
+        "darkslategrey",
+        "hotpink",
+        "plum",
+        "gold"
+    ]
+
+    # --- Plot ---
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    x = np.arange(len(periods))
+    bottom = np.zeros(len(periods))
+
+    min_pct = 2.0  # bare vis tekst hvis segmentet er minst 2%
+
+    for col, color in zip(df.columns, colors):
+        values = df[col].values
+        pct_values = df_pct[col].values
+
+        ax.bar(x, values, bottom=bottom, color=color, label=col)
+
+        # Tekst inni barene
+        for i, (v, b, p) in enumerate(zip(values, bottom, pct_values)):
+            if v > 0 and not np.isnan(p) and p >= min_pct:
+                ax.text(
+                    x=i,
+                    y=b + v / 2,
+                    s=f"{v:.0f}",
+                    ha='center',
+                    va='center',
+                    fontsize=12,
+                    color="white"
+                )
+        bottom += values
+
+    # --- X-akse ---
+    ax.set_xticks(x)
+    ax.set_xticklabels(periods, rotation=30, ha="right")
+
+    # --- Øk fontstørrelse på ticks ---
+    ax.tick_params(axis='x', labelsize=14)
+    ax.tick_params(axis='y', labelsize=14)
+    ax.set_ylabel("H₂ cost components [bn EUR]",fontsize=16)
+    ax.set_xlabel("Period",fontsize=16)
+    ax.legend(loc="upper left")
+    plt.tight_layout()
+    plt.show()
+
+
+
 
 def plot_h2_demand_stacked_area(
         df,
@@ -916,7 +1138,7 @@ def plot_top_map(
 
 def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None, results_dir=None):
     # ---- 0) Sjekk/konverter kolonner ----
-    required_cols = ["Node", "PEM_blue production [ton]","PEM_green production [ton]","PEM_grey production [ton]", "ALK production [ton]", "SOEC production [ton]",
+    required_cols = ["Node", "PEM_yellow production [ton]","PEM_green production [ton]", "ALK production [ton]", "SOEC production [ton]",
                      "Reformer production [ton]"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
@@ -985,7 +1207,7 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
     summary = summary.loc[keep].copy()
 
     # Total
-    part_cols = ["PEM_blue production [ton]","PEM_green production [ton]","PEM_grey production [ton]", "ALK production [ton]", "SOEC production [ton]", "Reformer production [ton]"]
+    part_cols = ["PEM_yellow production [ton]","PEM_green production [ton]", "ALK production [ton]", "SOEC production [ton]", "Reformer production [ton]"]
     summary["total"] = summary[part_cols].sum(axis=1)
 
     if summary.empty or summary["total"].sum() == 0:
@@ -1028,7 +1250,7 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
             return (r_min + r_max) / 2
         return r_min + np.sqrt(total / tmax) * (r_max - r_min)
 
-    colors = ("steelblue","seagreen","dimgrey", "plum", "rebeccapurple", "darkgrey")
+    colors = ("gold","seagreen", "plum", "rebeccapurple", "darkgrey")
 
     # ---- 6) Tegn pie for hvert land ----
     for node, row in summary.iterrows():
@@ -1039,12 +1261,11 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
     # ---- 7) Legende ----
     from matplotlib.lines import Line2D
     legend_elems = [
-        Line2D([0], [0], marker='o', color='w', label='PEM_blue', markerfacecolor=colors[0], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='PEM_yellow', markerfacecolor=colors[0], markersize=12),
         Line2D([0], [0], marker='o', color='w', label='PEM_green', markerfacecolor=colors[1], markersize=12),
-        Line2D([0], [0], marker='o', color='w', label='PEM_grey', markerfacecolor=colors[2], markersize=12),
-        Line2D([0], [0], marker='o', color='w', label='Alkaline', markerfacecolor=colors[3], markersize=12),
-        Line2D([0], [0], marker='o', color='w', label='SOEC', markerfacecolor=colors[4], markersize=12),
-        Line2D([0], [0], marker='o', color='w', label='Reformer', markerfacecolor=colors[5], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='Alkaline', markerfacecolor=colors[2], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='SOEC', markerfacecolor=colors[3], markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='Reformer', markerfacecolor=colors[4], markersize=12),
     ]
     ax.legend(handles=legend_elems, loc="upper left", title="Hydrogen technology", fontsize=19, title_fontsize=22)
 
@@ -1060,7 +1281,7 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
 
 
 def H2prod_per_country(df, n_hours, n_scen, savefigure=False, figurename=None, results_dir=None):
-    required_cols = ["Node", "PEM production [ton]", "ALK production [ton]", "SOEC production [ton]",
+    required_cols = ["Node", "PEM_yellow production [ton]","PEM_green production [ton]", "ALK production [ton]", "SOEC production [ton]",
                      "Reformer production [ton]"]
 
     seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
@@ -1073,7 +1294,7 @@ def H2prod_per_country(df, n_hours, n_scen, savefigure=False, figurename=None, r
         .mul(factor)
     )
 
-    part_cols = ["PEM production [ton]", "ALK production [ton]", "SOEC production [ton]", "Reformer production [ton]"]
+    part_cols = ["PEM_yellow production [ton]","PEM_green production [ton]", "SOEC production [ton]", "Reformer production [ton]"]
     summary["total"] = summary[part_cols].sum(axis=1)
 
     # 4) Sorter (størst øverst i plottet)
@@ -1295,3 +1516,435 @@ def plot_hydrogen_use(hydrogen_use, n_hours, n_scen, savefigure=False, figurenam
         plt.savefig(out, dpi=300, bbox_inches='tight')
         print(f"Figur lagret til {out}")
     plt.show()
+
+
+def plot_hydrogen_capacity(df):
+
+    df = df.copy()
+    df.columns = df.columns.str.strip()
+
+    capacity_cols = [
+        col for col in df.columns
+        if col.startswith("New ") and "capacity" in col
+    ]
+
+    if not capacity_cols:
+        print("Fant ingen kapasitetskolonner som starter med 'New ' og inneholder 'capacity'.")
+        return
+
+    def extract_tech(colname):
+        return colname.replace("New ", "").split(" capacity")[0]
+
+    tech_map = {col: extract_tech(col) for col in capacity_cols}
+
+    # -----------------------------------------
+    # 3) Long-format for plotting
+    # -----------------------------------------
+    df_long = df.melt(
+        id_vars=["Node", "Period"],
+        value_vars=capacity_cols,
+        var_name="Technology",
+        value_name="NewCapacity"
+    )
+
+    df_long["Technology"] = df_long["Technology"].map(tech_map)
+
+    # Konverter periode "2025-2030" → sorteringsverdi 20252030
+    df_long["Period_sort"] = df_long["Period"].str.replace("-", "").astype(int)
+    df_long = df_long.sort_values(["Node", "Period_sort"])
+
+    # -----------------------------------------
+    # 4) Plot per land
+    # -----------------------------------------
+    for node, df_node in df_long.groupby("Node"):
+        pivot = df_node.pivot_table(
+            index="Period",
+            columns="Technology",
+            values="NewCapacity",
+            aggfunc="sum"
+        )
+
+        if pivot.sum().sum() == 0:
+            continue
+
+        pivot.plot(kind="bar", stacked=True, figsize=(12, 6))
+        plt.title(f"New hydrogen capacity by technology – {node}")
+        plt.ylabel("New capacity")
+        plt.xlabel("Period")
+        plt.tight_layout()
+        plt.show()
+
+    # -----------------------------------------
+    # 5) (Valgfritt) Total for alle land
+    # -----------------------------------------
+    pivot_total = df_long.pivot_table(
+        index="Period",
+        columns="Technology",
+        values="NewCapacity",
+        aggfunc="sum"
+    )
+
+    if pivot_total.sum().sum() > 0:
+        pivot_total.plot(kind="bar", stacked=True, figsize=(12, 6))
+        plt.title("Total new hydrogen capacity by technology (all countries)")
+        plt.ylabel("New capacity")
+        plt.xlabel("Period")
+        plt.tight_layout()
+        plt.show()
+
+def HydrogenStorage_scatter(df, period, savefigure=False, figurename=None, results_dir=None):
+
+    required_cols = [
+        "Node", "Period",
+        "Total SaltCavern storage capacity [ton]",
+        "Total DGF storage capacity [ton]",
+        "Total Aquifer storage capacity [ton]",
+    ]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Mangler kolonner i df: {missing}")
+
+    # Filtrer på valgt periode (bare denne brukes)
+    df_p = df[df["Period"] == period].copy()
+    if df_p.empty:
+        raise ValueError(f"Ingen rader for Period = {period!r}")
+
+    cap_cols = [
+        "Total SaltCavern storage capacity [ton]",
+        "Total DGF storage capacity [ton]",
+        "Total Aquifer storage capacity [ton]",
+    ]
+    for c in cap_cols:
+        df_p[c] = pd.to_numeric(df_p[c], errors="coerce").fillna(0.0)
+
+    # Aggreger per Node
+    summary = (
+        df_p[["Node"] + cap_cols]
+        .groupby("Node", as_index=True)
+        .sum()
+    )
+
+    # Fjern noder som har 0 i alle teknologier (skal ikke ha prikk der)
+    summary = summary[(summary[cap_cols] > 0).any(axis=1)]
+    if summary.empty:
+        raise ValueError(f"Ingen positiv lagringskapasitet i perioden {period}.")
+
+    # ---- 1) Koordinater (lon, lat) ----
+    node_coords = {
+        "Austria": (14.55, 47.59),
+        "Belgium": (3.3, 50.85),
+        "BosniaH": (17.67, 43.92),
+        "Bulgaria": (25.48, 42.73),
+        "Croatia": (15.98, 45.10),
+        "CzechR": (15.47, 49.74),
+        "Denmark": (10.0, 56.0),
+        "France": (2.21, 46.22),
+        "Germany": (10.45, 51.16),
+        "GreatBrit.": (-2.0, 53.0),
+        "Greece": (21.82, 39.07),
+        "Hungary": (19.40, 47.16),
+        "Italy": (12.57, 42.83),
+        "Luxemb.": (6.13, 49.61),
+        "Macedonia": (21.75, 41.61),
+        "Netherlands": (5.5, 52.6),
+        "NO1": (10.98, 60.62),
+        "NO2": (7.38, 59.15),
+        "NO3": (8.0, 62.47),
+        "NO4": (19.0, 69.0),
+        "NO5": (6.52, 60.57),
+        "Poland": (19.14, 52.13),
+        "Portugal": (-8.0, 39.5),
+        "Romania": (24.96, 45.94),
+        "Serbia": (20.45, 44.82),
+        "Slovakia": (19.70, 48.66),
+        "Slovenia": (14.51, 46.15),
+        "Spain": (-3.7, 40.4),
+        "Sweden": (15.00, 60.12),
+        "Switzerland": (8.23, 46.80),
+        "Ireland": (-8.0, 53.35),
+        "Estonia": (25.0, 58.6),
+        "Latvia": (24.1, 56.9),
+        "Lithuania": (24.0, 55.3),
+        "Finland": (25.0, 64.0),
+    }
+
+    keep = summary.index.intersection(node_coords.keys())
+    missing_nodes = summary.index.difference(keep)
+    if len(missing_nodes) > 0:
+        print("Advarsel: mangler koordinater for:", ", ".join(missing_nodes))
+    summary = summary.loc[keep].copy()
+
+    if summary.empty:
+        raise ValueError(f"Ingen noder med både kapasitet og koordinater i perioden {period}.")
+
+    # ---- 2) Skaleringsfunksjon for punktstørrelse ----
+    techs = [
+        ("SaltCavern", "Total SaltCavern storage capacity [ton]", "yellowgreen", -1.6),
+        ("DGF",        "Total DGF storage capacity [ton]",        "orange",    0.0),
+        ("Aquifer",    "Total Aquifer storage capacity [ton]",    "darkolivegreen",   1.6),
+    ]
+
+    max_per_tech = {
+        name: summary[col].max()
+        for (name, col, _, _) in techs
+    }
+
+    print(max_per_tech)
+
+    def size_for(cap, max_cap, s_min=500, s_max=7000):
+        if max_cap <= 0 or cap <= 0:
+            return 0.0
+        return s_min + np.sqrt(cap / max_cap) * (s_max - s_min)
+
+    # ---- 3) Kart ----
+    fig = plt.figure(figsize=(14, 9))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.set_extent([-11, 26, 36, 60], crs=ccrs.PlateCarree())
+    ax.set_frame_on(False)
+    ax.add_feature(cfeature.LAND, facecolor="whitesmoke")
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.6)
+    ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.7)
+
+    # ---- 4) Plot prikker ----
+    for node, row in summary.iterrows():
+        lon, lat = node_coords[node]
+        for tech_name, col, color, dlon in techs:
+            cap = row[col]
+            s = size_for(cap, 6545)
+            if s <= 0:
+                continue
+            ax.scatter(
+                lon + dlon, lat,
+                s=s,
+                color=color,
+                alpha=0.8,
+                edgecolors="black",
+                linewidths=0.4,
+                transform=ccrs.PlateCarree(),
+                zorder=3,
+            )
+
+            if cap > 0:
+                ax.text(
+                    lon + dlon,
+                    lat,
+                    f"{cap:.1f}",
+                    ha="center",
+                    va="center",
+                    color="black",
+                    fontsize=14,
+                    fontweight="bold",
+                    transform=ccrs.PlateCarree(),
+                    zorder=4
+                )
+
+    # ---- 5) Legende ----
+    from matplotlib.lines import Line2D
+    legend_elems = [
+        Line2D([0], [0], marker='o', color='w', label='Salt cavern',
+               markerfacecolor='yellowgreen', markeredgecolor="black", markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='Depleted gas field (DGF)',
+               markerfacecolor='orange', markeredgecolor="black", markersize=12),
+        Line2D([0], [0], marker='o', color='w', label='Aquifer',
+               markerfacecolor='darkolivegreen', markeredgecolor="black", markersize=12),
+    ]
+    ax.legend(handles=legend_elems, loc="upper left",
+              title="Hydrogen storage technology", fontsize=14, title_fontsize=16)
+
+    plt.tight_layout(pad=0)
+
+    if savefigure and results_dir and figurename:
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        figpath = Path(results_dir) / f"{figurename}_H2storage_{period}.png"
+        plt.savefig(figpath, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {figpath}")
+    plt.show()
+
+def plot_DGF_charge_discharge_stochastic(
+    df,
+    node="Italy",
+    period="2045-2050",
+    gasscenario=1,
+    scenario=None,          # None => forventning over alle scenarioer
+):
+    charge_col = "DGF_charge [ton]"
+    disch_col = "DGF_discharge [ton]"
+
+    required = [
+        "Node", "Period", "Scenario", "GasScenario",
+        "Season", "Hour", charge_col, disch_col
+    ]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Mangler kolonner i df: {missing}")
+
+    # Numeriske verdier
+    for c in [charge_col, disch_col]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+
+    # Filter på node, periode, gasscenario
+    mask = (
+        (df["Node"] == node) &
+        (df["Period"] == period) &
+        (df["GasScenario"] == gasscenario)
+    )
+    if scenario is not None:
+        mask &= (df["Scenario"] == scenario)
+
+    sub = df.loc[mask, ["Season", "Hour", "Scenario", charge_col, disch_col]].copy()
+    if sub.empty:
+        raise ValueError("Ingen rader som matcher filteret.")
+
+    if scenario is None:
+        # Stochastic expectation: gjennomsnitt over alle scenarioer
+        grouped = (
+            sub.groupby(["Season", "Hour"], as_index=False)
+               .mean(numeric_only=True)
+        )
+        label_suffix = "(avg over scenarios)"
+    else:
+        # Én spesifikk scenario: ingen averaging over Scenario
+        grouped = (
+            sub.groupby(["Season", "Hour"], as_index=False)
+               .mean(numeric_only=True)
+        )
+        label_suffix = f"(scenario {scenario})"
+
+    # Sorter
+    season_order = {"winter": 0, "spring": 1, "summer": 2, "autumn": 3, "fall": 3}
+    grouped["season_order"] = grouped["Season"].map(season_order).fillna(99)
+    grouped = grouped.sort_values(["season_order", "Hour"])
+
+    # Tidsakse
+    grouped["t"] = np.arange(len(grouped))
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    ax.plot(grouped["t"], grouped[charge_col], label=f"DGF charge [ton] {label_suffix}")
+    ax.plot(grouped["t"], grouped[disch_col], label=f"DGF discharge [ton] {label_suffix}")
+
+    ax.set_xlabel("Hour")
+    ax.set_ylabel("Flow [ton/h]")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    return grouped
+
+def plot_discharge_cycles_sawtooth(
+    df,
+    node="Italy",
+    period="2045-2050",
+    gasscenario=1,
+    tech="DGF",
+    capacity=6545.9,
+    scenario=1,          # Viktig: vi ser på ett scenario om gangen
+):
+    disch_col = f"{tech}_discharge [ton]"
+
+    required = [
+        "Node", "Period", "Scenario", "GasScenario",
+        "Season", "Hour", disch_col
+    ]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Mangler kolonner i df: {missing}")
+
+    df[disch_col] = pd.to_numeric(df[disch_col], errors="coerce").fillna(0.0)
+
+    mask = (
+        (df["Node"] == node) &
+        (df["Period"] == period) &
+        (df["GasScenario"] == gasscenario) &
+        (df["Scenario"] == scenario)
+    )
+    sub = df.loc[mask, ["Season", "Hour", disch_col]].copy()
+    if sub.empty:
+        raise ValueError("Ingen rader som matcher filteret for dette scenarioet.")
+
+    # Ingen aggregering over Scenario lenger, kun Season/Hour
+    grouped = (
+        sub.groupby(["Season", "Hour"], as_index=False)
+           .mean(numeric_only=True)
+    )
+
+    season_order = {"winter": 0, "spring": 1, "summer": 2, "autumn": 3, "fall": 3}
+    grouped["season_order"] = grouped["Season"].map(season_order).fillna(99)
+    grouped = grouped.sort_values(["season_order", "Hour"])
+    grouped["t"] = np.arange(len(grouped))
+
+    # Sawtooth: kumulativ tapping modulo kapasitet
+    grouped["cum_discharge"] = grouped[disch_col].cumsum()
+    grouped["cycle_progress"] = grouped["cum_discharge"] % capacity
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(grouped["t"], grouped["cycle_progress"], color="orange")
+
+    ax.set_xlabel("Operational hour", fontsize=16)
+    ax.set_ylabel("Total amount discharged [ton]", fontsize=16)
+    ax.tick_params(axis='both', which='major', labelsize=14)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(alpha=0.3, linestyle="--")
+
+    title_node = node
+    ax.set_title(f"{tech} discharge cycles – {title_node}, {period}, gas={gasscenario}, scen={scenario}",
+                 fontsize=16)
+
+    plt.tight_layout()
+    plt.show()
+
+    return grouped
+
+
+def plot_power_balance_for_high_h2(df_merged, period, scenario=1, node="Italy"):
+    cols = [
+        "Available power [MWh]",
+        "Power generation [MWh]",
+        "Power curtailed [MWh]",
+        "Power storage charge [MWh]",
+        "Power storage discharge [MWh]",
+        "Power for hydrogen [MWh]",
+        "Power load [MWh]",
+        'Power transmission'
+        "Power shed [MWh]"
+    ]
+
+    # --- filtrér på periode, scenario og node ---
+    df_period = df_merged[
+        (df_merged["Period"] == period) &
+        (df_merged["Scenario"] == scenario) &
+        (df_merged["Node"] == node)
+    ].copy()
+
+    if df_period.empty:
+        print(f"Ingen rader med Period={period}, Scenario={scenario}, Node={node}")
+        return None
+
+    # sorter for pen tidsakse
+    df_period = df_period.sort_values(["Season", "Hour"]).reset_index(drop=True)
+    t = range(len(df_period))
+
+    # --- plotting ---
+    fig, ax = plt.subplots(figsize=(12,6))
+
+    for col in cols:
+        if col in df_period.columns:
+            ax.plot(t, df_period[col], label=col)
+
+    ax.set_ylabel("MWh")
+    ax.set_xlabel(f"Hours in period {period} (Scenario {scenario}, Node {node})")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    return df_period
+
+
+
+
+

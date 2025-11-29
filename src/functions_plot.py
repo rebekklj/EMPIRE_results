@@ -245,13 +245,13 @@ def Expected_annual_production(Elec_generation_countries, savefigure=False, resu
 
 
 def Yearly_hydrogenProd_perTech(
-        df, x1, x2, x3, x4, n_scen, n_hours,
+        df, x1, x2, x3, x4, x5, x6, n_scen, n_hours,
         y_max=None, savefigure=False, results_dir=None, figurename=None
 ):
     seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
     # 1) Aggreger dataene per periode
     agg = (df.groupby("Period")
-           .agg({x1: "sum", x2: "sum", x3: "sum", x4: "sum"})
+           .agg({x1: "sum", x2: "sum", x3: "sum", x4: "sum", x5: "sum", x6: "sum"})
            .reset_index())
 
     # 2) Sørg for korrekt rekkefølge på periodene
@@ -263,21 +263,21 @@ def Yearly_hydrogenProd_perTech(
     agg = agg.sort_values("Period")
 
     # 3) Plot som stablede stolper
-    fig, ax = plt.subplots(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(14, 9))
     pos = np.arange(len(agg)) * 0.5  # x-posisjoner for stolpene
     width = 0.3
 
-    agg[[x1, x2, x3, x4]] = agg[[x1, x2, x3, x4]] * seasonScale / n_scen
+    agg[[x1, x2, x3, x4, x5, x6]] = agg[[x1, x2, x3, x4, x5, x6]] * seasonScale / n_scen
 
     # Beregn totalproduksjon per periode for prosentandel
-    total = agg[[x1, x2, x3, x4]].sum(axis=1)
+    total = agg[[x1, x2, x3, x4, x5, x6]].sum(axis=1)
 
     # Stablet: bygg “bottom” fortløpende
     bottom = np.zeros(len(agg))
     for col, label, color in zip(
-            [x1, x2, x3, x4],
-            ["PEM", "Alkaline", "SOEC", "Reformer"],
-            ["steelblue", "plum", "rebeccapurple", "grey"]):
+            [x1, x2, x3, x4, x5, x6],
+            ["PEM blue", "PEM green","Pem yellow" ,"AWE", "SOEC", "SMR"],
+            ["steelblue", "seagreen","gold", "plum", "rebeccapurple", "grey"]):
 
         values = agg[col] / 1e6
         bars = ax.bar(pos, values, width, bottom=bottom, label=label, color=color, alpha=0.8)
@@ -299,15 +299,26 @@ def Yearly_hydrogenProd_perTech(
     ax.set_xlabel("Investment period", fontsize=18)
     ax.set_ylabel("Annual hydrogen production [M ton]", fontsize=18)
     ax.grid(axis="y", linestyle="--", alpha=0.5)
+    ax.margins(y=0.1)
     ax.legend(loc="upper left", fontsize=16, title='Technology', title_fontsize=18)
 
-    if y_max is not None:
+    cols = [x1, x2, x3, x4, x5, x6]
+
+    #if y_max is not None:
+     #   ax.set_ylim(0, y_max)
+    # Adjust y-axis limits
+    if y_max is None:
+        max_height = (agg[cols].sum(axis=1) / 1e6).max()
+        ax.set_ylim(0, max_height * 1.15)  # add 15% padding
+    else:
         ax.set_ylim(0, y_max)
+
     if savefigure and figurename and results_dir:
         Path(results_dir).mkdir(parents=True, exist_ok=True)
         figpath = Path(results_dir) / f'{figurename}_AnnH2prod.png'
         plt.savefig(figpath, dpi=300, bbox_inches='tight')
         print(f'Figure saved to {figpath}')
+    plt.tight_layout()
     plt.show()
 
 
@@ -907,7 +918,7 @@ def plot_top_map(
 
     plt.show()
 
-
+# -------- Hydrogen production pr tech: pie chart on map
 def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None, results_dir=None):
     # ---- 0) Sjekk/konverter kolonner ----
     required_cols = ["Node", "PEM production [ton]", "ALK production [ton]", "SOEC production [ton]",
@@ -1052,7 +1063,7 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
 
 
 def H2prod_per_country(df, n_hours, n_scen, savefigure=False, figurename=None, results_dir=None):
-    required_cols = ["Node", "PEM production [ton]", "ALK production [ton]", "SOEC production [ton]",
+    required_cols = ["Node", "PEM_blue production [ton]", "PEM_green production [ton]", "PEM_grey production [ton]","ALK production [ton]", "SOEC production [ton]",
                      "Reformer production [ton]"]
 
     seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
@@ -1065,7 +1076,8 @@ def H2prod_per_country(df, n_hours, n_scen, savefigure=False, figurename=None, r
         .mul(factor)
     )
 
-    part_cols = ["PEM production [ton]", "ALK production [ton]", "SOEC production [ton]", "Reformer production [ton]"]
+    part_cols = ["PEM_blue production [ton]", "PEM_green production [ton]", "PEM_grey production [ton]","ALK production [ton]", "SOEC production [ton]",
+                     "Reformer production [ton]"]
     summary["total"] = summary[part_cols].sum(axis=1)
 
     # 4) Sorter (størst øverst i plottet)
@@ -1544,6 +1556,182 @@ def make_pipeline_summary(
     plt.tight_layout()
     plt.savefig(fig_importers, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    # ---------- /PLOTS ----------
 
     return pipeline_summary, node_balance, top5_trades
+
+
+# -------------- Hydrogen storage plot ------------------
+
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def plot_h2_storage(
+    csv_path,
+    n_hours,
+    n_scen,
+    savefigure=False,
+    results_dir=None,
+    figurename=None,
+    charge_color="tab:blue",
+    discharge_color="tab:red",
+):
+    """
+    Plot hydrogen storage charge and discharge for each representative hour
+    over the whole horizon, aggregated over all nodes and gas scenarios,
+    and averaged over power scenarios.
+
+    Each period contributes 4*n_hours + 2*12 points
+    (4 seasons with n_hours + 2 peak seasons with 12 hours).
+
+    Parameters
+    ----------
+    csv_path : str or Path
+        Path to results_hydrogen_storage_operational.csv.
+    n_hours : int
+        Number of representative hours per regular season (for you: 84).
+    n_scen : int
+        Number of power scenarios with equal probability.
+    savefigure : bool, optional
+        If True, save the figure.
+    results_dir : str or Path, optional
+        Directory where the figure is saved if savefigure is True.
+    figurename : str, optional
+        Base name for the saved figure, without extension.
+    charge_color : str, optional
+        Color for the positive (charge) area.
+    discharge_color : str, optional
+        Color for the negative (discharge) area.
+
+    Returns
+    -------
+    hh_df : pandas.DataFrame
+        Dataframe with one row per (Period, Season, Hour) after:
+        - sum over Node and GasScenario
+        - average over Scenario
+        Columns:
+        ['Period','Season','Hour','charge_scaled','discharge_scaled','time_index']
+    """
+
+    if n_scen is None:
+        raise ValueError("n_scen must be provided explicitly and cannot be None.")
+
+    df = pd.read_csv(csv_path)
+
+    # Clean column names
+    df.columns = df.columns.str.strip()
+
+    # Season scaling factor (same logic as in EMPIRE)
+    season_scale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
+
+    # Scale each row
+    df["charge_scaled"] = df["Charge [ton]"] * season_scale
+    df["discharge_scaled"] = df["Discharge [ton]"] * season_scale
+
+    # Sum over Node and GasScenario, keep Period, Scenario, Season, Hour
+    grouped = (
+        df.groupby(["Period", "Scenario", "Season", "Hour"])[
+            ["charge_scaled", "discharge_scaled"]
+        ]
+        .sum()
+        .reset_index()
+    )
+
+    # Check scenario count
+    scen_in_data = grouped["Scenario"].nunique()
+    if scen_in_data != n_scen:
+        raise ValueError(
+            f"n_scen={n_scen}, but data contains {scen_in_data} unique scenarios."
+        )
+
+    # Average over scenarios: expected value for each (Period, Season, Hour)
+    hh_df = (
+        grouped.groupby(["Period", "Season", "Hour"])[
+            ["charge_scaled", "discharge_scaled"]
+        ]
+        .sum()
+        / float(n_scen)
+    ).reset_index()
+
+    # Keep a sensible season order
+    season_order = ["winter", "spring", "summer", "fall", "peak1", "peak2"]
+    hh_df["Season"] = pd.Categorical(hh_df["Season"],
+                                     categories=season_order,
+                                     ordered=True)
+
+    # Sort by period, season, hour
+    hh_df = hh_df.sort_values(["Period", "Season", "Hour"])
+
+    # Global time index for plotting
+    hh_df = hh_df.reset_index(drop=True)
+    hh_df["time_index"] = np.arange(len(hh_df))
+
+    # Prepare x and y
+    x = hh_df["time_index"].to_numpy()
+    y_charge = hh_df["charge_scaled"].to_numpy()
+    y_discharge = -hh_df["discharge_scaled"].to_numpy()  # negative for plotting
+
+    # Compute period label positions (center of each period block)
+    period_positions = {}
+    for period, grp in hh_df.groupby("Period"):
+        start = grp["time_index"].min()
+        end = grp["time_index"].max()
+        period_positions[period] = (start + end) / 2.0
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    ax.axhline(0.0, color="black", linewidth=0.8)
+
+    # Positive area for charge
+    ax.fill_between(
+        x,
+        0,
+        y_charge,
+        where=y_charge > 0,
+        interpolate=True,
+        color=charge_color,
+        alpha=0.8,
+        label="Charge",
+    )
+
+    # Negative area for discharge
+    ax.fill_between(
+        x,
+        0,
+        y_discharge,
+        where=y_discharge < 0,
+        interpolate=True,
+        color=discharge_color,
+        alpha=0.8,
+        label="Discharge",
+    )
+
+    # Period ticks
+    tick_positions = list(period_positions.values())
+    tick_labels = list(period_positions.keys())
+
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=45, ha="right")
+
+    ax.set_xlabel("Investment period")
+    ax.set_ylabel("Charge (+) and discharge (−) [ton]\n"
+                  "Season scaled, aggregated over nodes and gas scenarios,\n"
+                  "expected over power scenarios")
+    ax.set_title("Hydrogen storage charge and discharge by representative hour")
+    ax.legend()
+    fig.tight_layout()
+
+    if savefigure and results_dir and figurename:
+        results_dir = Path(results_dir)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        figpath = results_dir / f"{figurename}_H2storage_hourly_area.png"
+        plt.savefig(figpath, dpi=300, bbox_inches="tight")
+        print(f"Figure saved to {figpath}")
+
+    plt.show()
+
+    return hh_df

@@ -16,7 +16,7 @@ from matplotlib.patches import Wedge, Circle
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
 
-result_dir= data_dir / 'Results_BASE_new' / 'full_model_base'
+result_dir= data_dir / 'Results_MOD_FLEX_NUCLEAR' / 'full_model_base'
 
 """
 result_dir1 = data_dir / "Results_BalanceC8_trans" / "full_model_base"
@@ -115,63 +115,33 @@ def power_pies_and_transmission_map(
     df_trans,
     n_hours,
     n_scen,
-    line_color="tab:gray",
+    line_color="gray",
     savefigure=False,
     figurename=None,
     results_dir=None,
 ):
-    # ---------- 1) Felles node-koordinater ----------
+
+    # ---------- Nodekoordinater ----------
     node_coords = {
-        "Austria": (14.55, 47.59),
-        "Belgium": (4.47, 50.85),
-        "BosniaH": (17.67, 43.92),
-        "Bulgaria": (25.48, 42.73),
-        "Croatia": (15.98, 45.10),
-        "CzechR": (15.47, 49.74),
-        "Denmark": (10.0, 56.0),
-        "France": (2.21, 46.22),
-        "Germany": (10.45, 51.16),
-        "GreatBrit.": (-2, 53),
-        "Greece": (21.82, 39.07),
-        "Hungary": (19.40, 47.16),
-        "Italy": (12.57, 42.83),
-        "Luxemb.": (6.13, 49.61),
-        "Macedonia": (21.75, 41.61),
-        "Netherlands": (5.29, 52.13),
-        "NO1": (10.98, 60.62),
-        "NO2": (7.38, 59.15),
-        "NO3": (8.0, 62.47),
-        "NO4": (19.0, 69.0),
-        "NO5": (6.52, 60.57),
-        "Poland": (19.14, 52.13),
-        "Portugal": (-8.0, 39.5),
-        "Romania": (24.96, 45.94),
-        "Serbia": (20.45, 44.82),
-        "Slovakia": (19.70, 48.66),
-        "Slovenia": (14.51, 46.15),
-        "Spain": (-3.7, 40.4),
-        "Sweden": (15.00, 60.12),
-        "Switzerland": (8.23, 46.80),
-        "Ireland": (-8, 53.35),
-        "Estonia": (25.0, 58.6),
-        "Latvia": (24.1, 56.9),
-        "Lithuania": (24.0, 55.3),
-        "Finland": (25.0, 61.0),
+        "Austria": (14.55, 47.59), "Belgium": (4.47, 50.85), "BosniaH": (17.67, 43.92),
+        "Bulgaria": (25.48, 42.73), "Croatia": (15.98, 45.10), "CzechR": (15.47, 49.74),
+        "Denmark": (10.0, 56.0), "France": (2.21, 46.22), "Germany": (10.45, 51.16),
+        "GreatBrit.": (-2, 53), "Greece": (21.82, 39.07), "Hungary": (19.40, 47.16),
+        "Italy": (12.57, 42.83), "Luxemb.": (6.13, 49.61), "Macedonia": (21.75, 41.61),
+        "Netherlands": (5.29, 52.13), "NO1": (10.98, 60.62), "NO2": (7.38, 59.15),
+        "NO3": (8.0, 62.47), "NO4": (19.0, 69.0), "NO5": (6.52, 60.57),
+        "Poland": (19.14, 52.13), "Portugal": (-8.0, 39.5), "Romania": (24.96, 45.94),
+        "Serbia": (20.45, 44.82), "Slovakia": (19.70, 48.66), "Slovenia": (14.51, 46.15),
+        "Spain": (-3.7, 40.4), "Sweden": (15.00, 60.12), "Switzerland": (8.23, 46.80),
+        "Ireland": (-8, 53.35), "Estonia": (25.0, 58.6), "Latvia": (24.1, 56.9),
+        "Lithuania": (24.0, 55.3), "Finland": (25.0, 65.0),
     }
 
-    # ======================================================================
-    # 2) PIES fra df_power: prod / import / export / demand
-    # ======================================================================
+    # ---------- Oppsummering ----------
     demand_sectors = [
-        'Power load [MWh]',
-        'Power for transport [MWh]',
-        'Power for steel [MWh]',
-        'Power for cement [MWh]',
-        'Power for ammonia [MWh]',
-        'Power reformer plant [MWh]',
-        'Power for NG [MWh]',
-        'Power for hydrogen [MWh]',
-
+        'Power load [MWh]', 'Power for transport [MWh]', 'Power for steel [MWh]',
+        'Power for cement [MWh]', 'Power for ammonia [MWh]',
+        'Power reformer plant [MWh]', 'Power for NG [MWh]', 'Power for hydrogen [MWh]',
     ]
 
     cols_power = [
@@ -184,151 +154,110 @@ def power_pies_and_transmission_map(
     seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
 
     grouped = (
-        df_power[cols_power]
-        .groupby("Node")
-        .sum()
-        * 5 * seasonScale / n_scen
+        df_power[cols_power].groupby("Node").sum() * 5 * seasonScale / n_scen
     )
-    load_shed = (
-            df_power.groupby("Node")["Power shed [MWh]"].sum() * 5 * seasonScale / n_scen
-    )
+    load_shed = df_power.groupby("Node")["Power shed [MWh]"].sum() * 5 * seasonScale / n_scen
 
-    # ---- Demand = sektorbruk minus load shed ----
     grouped["Demand [MWh]"] = grouped[demand_sectors].sum(axis=1) - load_shed
 
     summary = grouped[[
-        "Power generation [MWh]",
-        "Power transmission in [MWh]",
-        "Power transmission out [MWh]",
-        "Demand [MWh]",
-    ]].copy()
-
-    summary = summary.loc[summary.index.intersection(node_coords.keys())].copy()
+        "Power generation [MWh]", "Power transmission in [MWh]",
+        "Power transmission out [MWh]", "Demand [MWh]",
+    ]]
+    summary = summary.loc[summary.index.intersection(node_coords.keys())]
     summary["total"] = summary.sum(axis=1)
 
-    # ======================================================================
-    # 3) TRANSMISJON fra df_trans (FromNode / ToNode / TransmissionReceived_MW)
-    # ======================================================================
+    # ---------- Transmission ----------
     df_trans = df_trans.copy()
+    df_trans["node_pair"] = df_trans.apply(lambda r: tuple(sorted([r["FromNode"], r["ToNode"]])), axis=1)
+    df_sum = df_trans.groupby("node_pair")["TransmissionReceived_MW"].sum().reset_index()
+    df_sum = df_sum[df_sum["TransmissionReceived_MW"] > 1e-12]
 
-    # gjør forbindelser retningsuavhengige
-    df_trans["node_pair"] = df_trans.apply(
-        lambda row: tuple(sorted([row["FromNode"], row["ToNode"]])),
-        axis=1
-    )
-
-    # summer over timer/scenarier/perioder
-    df_sum = (
-        df_trans.groupby("node_pair")["TransmissionReceived_MW"]
-        .sum()
-        .reset_index()
-    )
-
-    # dropp “null-linjer”
-    eps = 1e-12
-    df_sum = df_sum[df_sum["TransmissionReceived_MW"] > eps]
-
-    lines = []
-    for _, row in df_sum.iterrows():
-        n1, n2 = row["node_pair"]
-        coord1 = node_coords.get(n1)
-        coord2 = node_coords.get(n2)
-        if coord1 and coord2:
-            lines.append({
-                "coords": [coord1, coord2],
-                "value": row["TransmissionReceived_MW"],
-                "nodes": f"{n1}–{n2}",
-            })
-
-    # ======================================================================
-    # 4) Kart, linjer og pies på samme aksen
-    # ======================================================================
-    fig = plt.figure(figsize=(14, 12))
+    # ---------- Plot ----------
+    fig = plt.figure(figsize=(14, 14))
+    fig.subplots_adjust(bottom=0.25)
     ax = plt.axes(projection=ccrs.PlateCarree())
-    ax.set_extent([-11, 35, 35, 71], crs=ccrs.PlateCarree())
-
+    ax.set_extent([-11, 35, 35, 71])
     ax.add_feature(cfeature.LAND, facecolor="whitesmoke")
     ax.add_feature(cfeature.COASTLINE, linewidth=0.6)
     ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.7)
 
-    # ---- transmisjonslinjer med diskret tykkelse ----
+    # =======================================================
+    #   Transmission line thickness = sqrt-scaled
+    # =======================================================
     legend_lines = []
     if not df_sum.empty:
-        max_val = max(df_sum["TransmissionReceived_MW"])
-        bins = [0, 0.25, 0.5, 0.75, 1.0]
-        widths = [2, 30, 40, 50]
+        p98 = np.percentile(df_sum["TransmissionReceived_MW"], 98)
+        eff_max = p98
+        max_val = df_sum["TransmissionReceived_MW"].max()
+        min_val = df_sum["TransmissionReceived_MW"].min()
 
-        import matplotlib.lines as mlines
+        def scale_lw(v):
+            v_clipped = min(v, eff_max)  # topper av
+            v_norm = v_clipped / eff_max  # lineær skalering
+            lw_min, lw_max = 1.2, 25
+            return lw_min + v_norm * (lw_max - lw_min)
 
-        for l in lines:
-            xs, ys = zip(*l["coords"])
-            ratio = l["value"] / max_val
-            for i in range(len(bins) - 1):
-                if bins[i] <= ratio < bins[i + 1]:
-                    lw = widths[i]
-                    break
-            else:
-                lw = widths[-1]
+        for _, row in df_sum.iterrows():
+            n1, n2 = row["node_pair"]
+            if n1 in node_coords and n2 in node_coords:
+                xs, ys = zip(node_coords[n1], node_coords[n2])
+                ax.plot(xs, ys, color=line_color, linewidth=scale_lw(row["TransmissionReceived_MW"]),
+                        alpha=0.45, transform=ccrs.PlateCarree(), zorder=1)
 
-            ax.plot(xs, ys, color=line_color, linewidth=lw, alpha=0.5,
-                    transform=ccrs.PlateCarree())
+        def format_power(v):
+            if v >= 1e6:
+                return f"{v/1e6:.1f} TW"
+            elif v >= 1e3:
+                return f"{v/1e3:.1f} GW"
+            return f"{v:.0f} MW"
 
-        # linje-legend
-        for i in range(len(widths)):
-            lower_val = bins[i] * max_val
-            if lower_val == 0:
-                lower_val = df_sum.loc[df_sum["TransmissionReceived_MW"] > 0,
-                                       "TransmissionReceived_MW"].min()
-            upper_val = bins[i + 1] * max_val
-            label = f"{lower_val:.1f} – {upper_val:.1f} MW"
-            legend_lines.append(
-                mlines.Line2D([], [], color=line_color,
-                              linewidth=widths[i], label=label)
-            )
+        # Legend with representative levels
+        levels = [
+            min_val,
+            np.percentile(df_sum["TransmissionReceived_MW"], 50),
+            np.percentile(df_sum["TransmissionReceived_MW"], 90),
+            eff_max
+        ]
 
-    # ---- hjelpefunksjon for pies ----
-    def draw_pie(ax, lon, lat, values, radius_deg, colors):
-        total = float(np.sum(values))
+        legend_lines = [
+            Line2D([], [], color=line_color,
+                   linewidth=scale_lw(v),
+                   label=format_power(v))
+            for v in levels
+        ]
+
+    # =======================================================
+    #   PIE PLOTTING
+    # =======================================================
+    colors_pie = ("#4C78A8", "#F58518", "#E45756", "#72B7B2")
+
+    sizes = summary["total"].values
+    tmax = sizes.max()
+    r_min, r_max = 0.3, 2.6
+
+    def scale_radius(v):
+        return r_min + np.sqrt(v / tmax) * (r_max - r_min)
+
+    def draw_pie(ax, lon, lat, values, r, colors):
+        total = sum(values)
         if total <= 0:
             return
         fracs = np.array(values) / total
-        start = 0.0
+        start = 0
         for frac, col in zip(fracs, colors):
-            if frac <= 0:
-                continue
-            theta1, theta2 = 360 * start, 360 * (start + frac)
-            wedge = Wedge(
-                (lon, lat), radius_deg, theta1, theta2,
-                facecolor=col, edgecolor="black", linewidth=0.3,
-                transform=ccrs.PlateCarree()
-            )
-            ax.add_patch(wedge)
-            start += frac
-        ring = Circle(
-            (lon, lat), radius_deg, facecolor="none",
-            edgecolor="black", linewidth=0.3,
-            transform=ccrs.PlateCarree()
-        )
+            if frac > 0:
+                theta1, theta2 = 360 * start, 360 * (start + frac)
+                wedge = Wedge((lon, lat), r, theta1, theta2, facecolor=col,
+                              edgecolor="black", linewidth=0.3,
+                              transform=ccrs.PlateCarree(), zorder=3)
+                ax.add_patch(wedge)
+                start += frac
+        ring = Circle((lon, lat), r, facecolor="none",
+                      edgecolor="black", linewidth=0.4,
+                      transform=ccrs.PlateCarree(), zorder=4)
         ax.add_patch(ring)
 
-    # skalering for piestørrelse
-    t = summary["total"].values
-    if len(t) == 0:
-        tmax = 0
-    else:
-        tmax = np.nanmax(t)
-    r_min, r_max = 0.3, 2.5
-
-    def scale_radius(total):
-        if tmax <= 0:
-            return (r_min + r_max) / 2
-        s = np.sqrt(total / tmax)
-        return r_min + s * (r_max - r_min)
-
-    # farger: prod, import, export, demand
-    colors_pie = ("#4C78A8", "#F58518", "#E45756", "#72B7B2")
-
-    # tegn pies
     for node, row in summary.iterrows():
         lon, lat = node_coords[node]
         r = scale_radius(row["total"])
@@ -338,39 +267,74 @@ def power_pies_and_transmission_map(
             row["Power transmission out [MWh]"],
             row["Demand [MWh]"],
         ]
-        draw_pie(ax, lon, lat, vals, radius_deg=r, colors=colors_pie)
+        draw_pie(ax, lon, lat, vals, r, colors_pie)
 
-    # ---- samlet legend (pies + linjer) ----
-    pie_legend = [
-        Line2D([0], [0], marker="o", color="w", label="Local generation",
+    # =======================================================
+    #   PIE SIZE LEGEND (Alternativ A)
+    # =======================================================
+    pie_totals = summary["total"].values
+    pie_levels = np.linspace(pie_totals.min(), pie_totals.max(), 4)
+
+    pie_size_legend = [
+        Line2D([], [], marker='o', linestyle='None',
+               markersize=scale_radius(val) * 10,
+               markerfacecolor="lightgray", markeredgecolor="black",
+               label=f"{val:,.0f} MWh")
+        for val in pie_levels
+    ]
+
+    # =======================================================
+    #   PIE COLOR LEGEND
+    # =======================================================
+    pie_color_legend = [
+        Line2D([], [], marker='o', color="w", label="Local generation",
                markerfacecolor=colors_pie[0], markersize=12),
-        Line2D([0], [0], marker="o", color="w", label="Import",
+        Line2D([], [], marker='o', color="w", label="Import",
                markerfacecolor=colors_pie[1], markersize=12),
-        Line2D([0], [0], marker="o", color="w", label="Export",
+        Line2D([], [], marker='o', color="w", label="Export",
                markerfacecolor=colors_pie[2], markersize=12),
-        Line2D([0], [0], marker="o", color="w", label="Demand (all sectors)",
+        Line2D([], [], marker='o', color="w", label="Demand",
                markerfacecolor=colors_pie[3], markersize=12),
     ]
 
-    handles = pie_legend + legend_lines
-    ax.legend(
-        handles=handles,
-        loc="lower left",
-        frameon=True,
-        fontsize=11,
-        title="Pies: energy shares  |  Lines: avg flow",
-        title_fontsize=12,
-    )
+    # =======================================================
+    #   PLACE LEGENDS IN ORDER
+    # =======================================================
+    # Pies: fargelegend
+    leg1 = ax.legend(handles=pie_color_legend, loc="lower left",
+                     frameon=True, fontsize=11,
+                     bbox_to_anchor=(0.13, -0.18),
+                     labelspacing=1.4,  # ekstra luft for store sirkler
+                     handletextpad=1.0,  # større avstand mellom sirkel og tekst
+                     borderpad=0.7,
+                     )
+
+    ax.add_artist(leg1)
+
+    # Pie size-legend
+    leg2 = ax.legend(handles=pie_size_legend, loc="lower left",
+                     bbox_to_anchor=(0.45, -0.18),
+                     frameon=True, fontsize=11,
+                     title="Energy content", title_fontsize=12,
+                     labelspacing=1.4,  # ekstra luft for store sirkler
+                     handletextpad=1.0,  # større avstand mellom sirkel og tekst
+                     borderpad=0.7,
+                     )
+    ax.add_artist(leg2)
+
+    # Transmission legend
+    ax.legend(handles=legend_lines, loc="lower left",
+              bbox_to_anchor=(0.77, -0.18),
+              frameon=True, fontsize=11,
+              title="Transmission flow", title_fontsize=12,
+              labelspacing=1.4,  # ekstra luft for store sirkler
+              handletextpad=1.5,  # større avstand mellom sirkel og tekst
+              borderpad=0.7,
+              )
 
     plt.tight_layout()
-
-    if savefigure and results_dir and figurename:
-        Path(results_dir).mkdir(parents=True, exist_ok=True)
-        figpath = Path(results_dir) / f"{figurename}_power_pies_plus_trans.png"
-        plt.savefig(figpath, dpi=300, bbox_inches="tight")
-        print(f"Figure saved to {figpath}")
-
     plt.show()
+
 
 power_pies_and_transmission_map(
     Power_balance,

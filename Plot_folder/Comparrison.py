@@ -6,8 +6,8 @@ import numpy as np
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir1= data_dir / 'Results_BASE_MOD_NOFLEX' / 'full_model_base'
-result_dir2= data_dir / 'Results_BASE_MOD_FLEX' / 'full_model_base'
+result_dir1= data_dir / 'Results_FINAL_BASE_NOFLEX_emcap' / 'full_model_base'
+result_dir2= data_dir / 'Results_FINAL_BASE_FLEX_emcap' / 'full_model_base'
 
 
 def compute_period_costs(Gen_op, Gen_inv, H2_inv, Stor_el, Trans_inv, n_scen):
@@ -140,10 +140,9 @@ def plot_OBJ_generator_inv_diff(df_base, df_scen,
     ax.tick_params(axis='x', labelsize=14)
     ax.set_ylim([-130, 130])
     ax.set_xlabel("Period", fontsize=16)
-    ax.set_ylabel(f"Difference vs {name_base} [bn EUR]", fontsize=16)
-    ax.set_title(f"{name_scen} – {name_base}: objective cost components", fontsize=16)
+    ax.set_ylabel(f"Difference vs flexible scenario [bn EUR]", fontsize=16)
     ax.legend(loc="upper left", fontsize=12, bbox_to_anchor=(1.02, 1.0))
-
+    plt.grid(axis='y')
     plt.tight_layout()
     plt.show()
 
@@ -221,7 +220,7 @@ def plot_total_objective_difference(df_base, df_scen,
     # Nå: gjør aksen bredere enn baren
     ax.set_xlim(-1, 1)   # NØKKELEN: større x-range → visuelt tynnere stolpe
     ax.set_xticks([x])
-    ax.set_xticklabels([f"{name_scen} – {name_base}"])
+    ax.set_xticklabels([f" Constant demand vs flexible demand"])
 
     ax.axhline(0, color="black", linewidth=1)
 
@@ -348,17 +347,18 @@ def plot_production_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN"):
 
     ax.set_xticks(x)
     ax.set_ylim([-900,900])
-    ax.set_xticklabels(periods, rotation=30, ha="right")
-    ax.set_ylabel(f"Difference in expected annual production [{name_scen} – {name_base}] [TWh]", fontsize=14)
-    ax.set_title(f"Annual production difference per period ({name_scen} – {name_base})", fontsize=16)
-
+    plt.yticks(fontsize=18)
+    ax.set_xticklabels(periods, rotation=30, ha="right",fontsize=18)
+    ax.set_ylabel(f"Annual production [TWh]", fontsize=20)
     # Legende
     handles = [plt.Rectangle((0,0),1,1,color=tech_colors.get(t,"lightgray")) for t in all_techs]
-    ax.legend(handles, all_techs, title="Technology", fontsize=10, ncol=2,
+    ax.legend(handles, all_techs, title="Technology", fontsize=15,title_fontsize=15, ncol=2,
               bbox_to_anchor=(1.02, 1), loc="upper left")
 
     plt.tight_layout()
+    plt.grid(axis='y')
     plt.show()
+
 
     return prod_diff_TWh
 

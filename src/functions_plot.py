@@ -1728,13 +1728,39 @@ def HydrogenStorage_scatter(df, period, savefigure=False, figurename=None, resul
     # ---- 4) Plot prikker ----
     for node, row in summary.iterrows():
         lon, lat = node_coords[node]
-        for tech_name, col, color, dlon in techs:
+
+        # ⭐ 1) Hent DGF-størrelsen for denne noden
+        cap_DGF = row["Total DGF storage capacity [ton]"]
+        s_DGF = size_for(cap_DGF, 6545)
+
+        # ⭐ 2) Parametre for estetikk
+        s_ref = 2500
+        alpha = 0.5
+        base_offset = 1.2
+
+        # ⭐ 3) Dynamisk forskyvning basert på DGF-størrelse
+        if s_DGF > 0:
+            shift = base_offset * (s_DGF / s_ref) ** alpha
+        else:
+            shift = base_offset*0.9
+
+        # ⭐ 4) PLOTT DE TRE TEKNOLOGIENE
+        for tech_name, col, color, _ in techs:
             cap = row[col]
             s = size_for(cap, 6545)
             if s <= 0:
                 continue
+
+            # Posisjon styres nå av DGF
+            if tech_name == "DGF":
+                x = lon
+            elif tech_name == "SaltCavern":
+                x = lon - shift
+            elif tech_name == "Aquifer":
+                x = lon + shift
+
             ax.scatter(
-                lon + dlon, lat,
+                x, lat,
                 s=s,
                 color=color,
                 alpha=0.8,
@@ -1744,19 +1770,17 @@ def HydrogenStorage_scatter(df, period, savefigure=False, figurename=None, resul
                 zorder=3,
             )
 
-            if cap > 0:
-                ax.text(
-                    lon + dlon,
-                    lat,
-                    f"{cap:.1f}",
-                    ha="center",
-                    va="center",
-                    color="black",
-                    fontsize=14,
-                    fontweight="bold",
-                    transform=ccrs.PlateCarree(),
-                    zorder=4
-                )
+            ax.text(
+                x, lat,
+                f"{cap:.0f}",
+                ha="center",
+                va="center",
+                fontsize=14,
+                fontweight="bold",
+                color="black",
+                transform=ccrs.PlateCarree(),
+                zorder=4
+            )
 
     # ---- 5) Legende ----
     from matplotlib.lines import Line2D

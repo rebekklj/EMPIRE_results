@@ -16,16 +16,16 @@ from functions_plot import (Expected_annual_production, plot_top_map,
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir = data_dir / "Results_BASE_PREVIOUS_FLEX" / "full_model_base"
-plot_dir = data_dir / "Results_BASE_PREVIOUS_FLEX" #lagrer figurene i resultat mappen
+result_dir = data_dir / "Results_FINAL_BASE_FLEX_emcap" / "full_model_base"
+plot_dir = data_dir / "Results_FINAL_BASE_FLEX_emcap" #lagrer figurene i resultat mappen
 plot_dir.mkdir(exist_ok=True)
 
 Lagre_figurer =False
 figurnavn = "BASE_moderate"
 
-gen_info='yes'
+gen_info=('yes')
 H2_prod='yes'
-el_demand='yes'
+el_demand='no'
 H2_storage='yes'
 
 # In[]
@@ -104,6 +104,8 @@ if H2_storage=='yes':
                               gasscenario=1,
                               scenario='scenario1')
 
+
+    df = pd.read_csv(result_dir / "results_hydrogen_storage_operational.csv")
     plot_discharge_cycles_sawtooth(
         df,
         node="Germany",
@@ -120,7 +122,7 @@ if H2_storage=='yes':
     plot_storage_charge_discharge_total(df, '2045-2050', 1, 'scenario1', 'Aquifer')
     plot_storage_charge_discharge_total(df, '2045-2050', 1, 'scenario1', 'SaltCavern')
 
-    df = pd.read_csv(result_dir / "results_hydrogen_storage_operational.csv")
+
     merged = plot_h2_prod_discharge_plus_demand(
         hydrogen_production,
         df,

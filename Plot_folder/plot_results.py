@@ -11,13 +11,14 @@ from functions_plot import (Expected_annual_production, plot_top_map,
                             HydrogenStorage_scatter, plot_DGF_charge_discharge_stochastic,
                             plot_discharge_cycles_sawtooth,plot_power_balance_for_high_h2,
                             hydrogen_prod_vs_import_bar,Yearly_hydrogenProd_perTech,
-                            plot_storage_charge_discharge_total,plot_h2_prod_discharge_plus_demand)
+                            plot_storage_charge_discharge_total,plot_h2_prod_discharge_plus_demand,
+                            Power_gen_hourly,Duration_curve_power_prod)
 
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir = data_dir / "Results_FINAL_BASE_FLEX_emcap" / "full_model_base"
-plot_dir = data_dir / "Results_FINAL_BASE_FLEX_emcap" #lagrer figurene i resultat mappen
+result_dir = data_dir / "Results_FINAL_woALKSOEC" / "full_model_base"
+plot_dir = data_dir / "Results_FINAL_woALKSOEC" #lagrer figurene i resultat mappen
 plot_dir.mkdir(exist_ok=True)
 
 Lagre_figurer =False
@@ -25,7 +26,7 @@ figurnavn = "BASE_moderate"
 
 gen_info=('yes')
 H2_prod='yes'
-el_demand='no'
+el_demand='yes'
 H2_storage='yes'
 
 # In[]
@@ -47,6 +48,79 @@ if gen_info=='yes':
                                                figsize=(18, 12),
                                                savefigure=Lagre_figurer,
                                                figurename=figurnavn, results_dir=plot_dir)
+
+# In[] Power production
+
+Power_generation = pd.read_csv(
+    result_dir / "results_elec_generation_operational.csv",  index_col=False)
+
+Power_gen_hourly(Power_generation)
+Duration_curve_power_prod(Power_generation)
+
+# In[] Transmission utilization
+
+transmission_operational = pd.read_csv(result_dir/ 'results_elec_transmission_operational.csv')
+transmission_inv = pd.read_csv(result_dir/ 'results_transmission_inv.csv')
+
+scenario = "scenario2"
+
+op = transmission_operational.copy()
+inv = transmission_inv.copy()
+
+op["Link"]  = op.apply(lambda r: " - ".join(sorted([r["FromNode"], r["ToNode"]])), axis=1)
+inv["Link"] = inv.apply(lambda r: " - ".join(sorted([r["BetweenNode"], r["AndNode"]])), axis=1)
+
+# --- Velg kapasitet (anbefalt: InstalledCap) ---
+cap_col = "transmissionInstalledCap_MW"
+
+# Hvis invest-fila er scenario-uavhengig (slik den ser ut hos deg), merge på Period+Link
+merge_keys = ["Period", "Link"]
+inv_small = inv[merge_keys + [cap_col]].copy()
+
+op = op[op["Scenario"] == scenario].copy()
+op = op.merge(inv_small, on=merge_keys, how="left")
+
+# --- Brukt kapasitet: absolutt flyt (MW). Du kan også inkludere losses om du vil.
+op["Used_MW"] = op["TransmissionReceived_MW"].abs()
+
+# Unngå tull hvis kapasitet mangler / er 0
+op = op.dropna(subset=[cap_col])
+op = op[op[cap_col] > 0].copy()
+
+op["Cap_MW"] = op[cap_col]
+op["Unused_MW"] = (op["Cap_MW"] - op["Used_MW"]).clip(lower=0)
+op["Util"] = op["Used_MW"] / op["Cap_MW"]  # 0-1
+
+link = "France - Italy"  # skriv slik som Link blir (alfabetisk med " - ")
+
+d = op[op["Link"] == link].copy()
+
+period_order = sorted(d["Period"].unique(), key=lambda s: int(str(s).split("-")[0]))
+
+for per in period_order:
+    dp = d[d["Period"] == per].copy()
+
+    # Duration curve: sorter timer etter brukt kapasitet (høy -> lav)
+    dp = dp.sort_values("Used_MW", ascending=False).reset_index(drop=True)
+
+    # x-akse i % av timer (0-100)
+    x = np.linspace(0, 100, len(dp))
+
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+    ax.stackplot(
+        x,
+        dp["Used_MW"].to_numpy(),
+        dp["Unused_MW"].to_numpy(),
+        labels=["Used (MW)", "Unused (MW)"]
+    )
+    ax.set_title(f"{link} – {scenario} – {per} (duration curve)")
+    ax.set_xlabel("Andel av timer (%) sortert (høyest → lavest)")
+    ax.set_ylabel("MW")
+    ax.set_ylim(0, dp["Cap_MW"].iloc[0])  # kapasitet er konstant innen periode for linken
+    ax.legend(loc="upper right")
+    plt.tight_layout()
+    plt.show()
+
 
 # In[]
 Power_balance= pd.read_csv(result_dir / "results_power_balance.csv")
@@ -73,8 +147,6 @@ hydrogen_use=pd.read_csv(result_dir/ 'results_hydrogen_use.csv')
 if H2_prod=='yes':
     plot_hydrogen_use(hydrogen_use, 12, 2, savefigure=False, figurename=None, results_dir=None)
     hydrogen_prod_vs_import_bar(hydrogen_use)
-
-
 
 
 # In[]

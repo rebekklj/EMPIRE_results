@@ -16,7 +16,13 @@ from matplotlib.patches import Wedge, Circle
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
 
-result_dir= data_dir / 'Results_MOD_FLEX_NUCLEAR' / 'full_model_base'
+result_dir= data_dir / "Results_FINAL_BASE_NOFLEX_emcap" / 'full_model_base'
+
+result_dir2= data_dir / 'Results_FINAL_BASE_sys2' / 'full_model_base'
+result_dir8=data_dir / 'Results_FINAL_BASE_sys8' / 'full_model_base'
+result_dir16=data_dir / 'Results_FINAL_BASE_sys16' / 'full_model_base'
+result_dir24=data_dir / 'Results_FINAL_BASE_sys24' / 'full_model_base'
+result_dir32=data_dir / 'Results_FINAL_BASE_sys32' / 'full_model_base'
 
 """
 result_dir1 = data_dir / "Results_BalanceC8_trans" / "full_model_base"
@@ -336,16 +342,165 @@ def power_pies_and_transmission_map(
     plt.show()
 
 
-power_pies_and_transmission_map(
-    Power_balance,
-    Transmission_operation,
-    12,
-    2,
-    line_color="tab:gray",
-    savefigure=False,
-    figurename=None,
-    results_dir=None,
+def system_costs_analysis(result_dir):
+    df = pd.read_csv((result_dir / "results_output_EuropeSummary.csv"), delimiter=",", skiprows=16,
+                                 usecols=[0, 1, 2, 3, 4, 5], skipfooter=16, engine='python')
+
+    df["genProduction_5yr_GWh"] = df["genExpectedAnnualProduction_GWh"] * 5 * 0.001
+
+    # Gjør GeneratorType lowercase for robust matching
+    df["GeneratorType_lower"] = df["GeneratorType"].str.lower()
+
+    # Definer teknologinøkler
+    nuclear_keys = ["nuclear"]
+    windon_keys = ["windonshore"]
+    solar_keys = ["solar"]
+
+    # Summer produksjon (5-årsperioder)
+    nuc = df.loc[
+        df["GeneratorType_lower"].str.contains("|".join(nuclear_keys)),
+        "genProduction_5yr_GWh"
+    ].sum()
+
+    windon = df.loc[
+        df["GeneratorType_lower"].str.contains("|".join(windon_keys)),
+        "genProduction_5yr_GWh"
+    ].sum()
+
+    solar = df.loc[
+        df["GeneratorType_lower"].str.contains("|".join(solar_keys)),
+        "genProduction_5yr_GWh"
+    ].sum()
+
+    # Other = alt som ikke er nuclear, windonshore eller solar
+    mask_other = ~(
+        df["GeneratorType_lower"].str.contains("|".join(nuclear_keys + windon_keys + solar_keys))
+    )
+
+    other = df.loc[mask_other, "genProduction_5yr_GWh"].sum()
+
+    # Resultat
+    print(f"nuc    = {nuc:.2f} GWh (2020–2055)")
+    print(f"windon = {windon:.2f} GWh (2020–2055)")
+    print(f"solar  = {solar:.2f} GWh (2020–2055)")
+    print(f"other  = {other:.2f} GWh (2020–2055)")
+
+    return nuc, windon, solar, other
+
+
+nuc2, windon2, solar2, other2 =system_costs_analysis(result_dir2)
+nuc8,windon8,solar8,other8 = system_costs_analysis(result_dir8)
+nuc16,windon16,solar16,other16 = system_costs_analysis(result_dir16)
+nuc24,windon24,solar24,other24 = system_costs_analysis(result_dir24)
+nuc32,windon32,solar32,other32 = system_costs_analysis(result_dir32)
+
+sys_costs = np.array([2, 8, 16, 24, 32], dtype=float)
+
+nuc    = np.array([nuc2,  nuc8,  nuc16,  nuc24,  nuc32], dtype=float)
+windon = np.array([windon2, windon8, windon16, windon24, windon32], dtype=float)
+solar  = np.array([solar2, solar8, solar16, solar24, solar32], dtype=float)
+other  = np.array([other2, other8, other16, other24, other32], dtype=float)
+
+import numpy as np
+
+# Finn intervallet der kurvene krysser
+for i in range(len(sys_costs) - 1):
+    if (nuc[i] - windon[i]) * (nuc[i+1] - windon[i+1]) < 0:
+        idx = i
+        break
+
+# Punktene
+x1, x2 = sys_costs[idx], sys_costs[idx+1]
+n1, n2 = nuc[idx], nuc[idx+1]
+w1, w2 = windon[idx], windon[idx+1]
+
+# Lineær funksjon: y = a x + b
+a_n = (n2 - n1) / (x2 - x1)
+b_n = n1 - a_n * x1
+
+a_w = (w2 - w1) / (x2 - x1)
+b_w = w1 - a_w * x1
+
+# Skjæringspunkt
+break_even_cost = (b_w - b_n) / (a_n - a_w)
+break_even_prod = a_n * break_even_cost + b_n
+
+print(f"Break-even ≈ {break_even_cost:.2f} EUR/MWh")
+print(f"Production at break-even ≈ {break_even_prod:.1f} TWh")
+
+
+plt.figure(figsize=(10,7))
+
+techs = {
+    "Nuclear": nuc,
+    "Wind onshore": windon,
+    "Solar": solar,
+    "Other": other
+}
+
+colors=['pink','seagreen','violet','darkgray']
+
+for (name, values), color in zip(techs.items(), colors):
+    plt.plot(
+        sys_costs,
+        values,
+        marker="o",
+        linewidth=2.5,
+        label=name,
+        color=color
+    )
+
+    # legg til tall ved hvert punkt
+    for x, y in zip(sys_costs, values):
+        plt.annotate(
+            f"{y:.1f}",
+            (x, y),
+            textcoords="offset points",
+            xytext=(3, 6),
+            ha="left",
+            fontsize=12,
+            color='black'
+        )
+
+plt.scatter(
+    break_even_cost,
+    break_even_prod,
+    color="red",
+    s=140,
+    zorder=6,
+    label=f"{break_even_cost:.2f} EUR/MWh",
 )
+
+
+plt.legend(fontsize=12)
+
+
+plt.xlabel("Balance costs VRES [EUR/MWh] ", fontsize=16)
+plt.ylabel("Total energy production [TWh]", fontsize=16)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+plt.ylim(0,11*10e3)
+plt.legend(fontsize=12)
+plt.grid(linestyle='--')
+plt.tight_layout()
+plt.show()
+
+
+
+trans_map='no'
+
+if trans_map == 'yes':
+
+    power_pies_and_transmission_map(
+        Power_balance,
+        Transmission_operation,
+        12,
+        2,
+        line_color="tab:gray",
+        savefigure=False,
+        figurename=None,
+        results_dir=None,
+    )
 
 
 

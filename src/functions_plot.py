@@ -243,6 +243,100 @@ def Expected_annual_production(Elec_generation_countries, savefigure=False, resu
     plt.show()
 
 
+
+def Power_gen_hourly(Power_generation):
+    cols = ['Hour', 'Period', 'Scenario', 'Nuclear_MW', 'Windonshore_MW', 'Solar_MW']
+    Elec_gentype = Power_generation[cols].copy()
+
+    df = (Elec_gentype[Elec_gentype['Scenario'] == 'scenario2']
+          .groupby(['Period', 'Hour'], as_index=False)[['Nuclear_MW', 'Solar_MW', 'Windonshore_MW']]
+          .sum())
+
+    period_order = sorted(df['Period'].unique(), key=lambda s: int(str(s).split('-')[0]))
+    df['Period'] = pd.Categorical(df['Period'], categories=period_order, ordered=True)
+    df = df.sort_values(['Period', 'Hour']).reset_index(drop=True)
+
+    # --- Lag en sekvensiell tidsakse som går periode for periode ---
+    sizes = df.groupby('Period', observed=True).size().reindex(period_order).to_numpy()
+    offsets = np.r_[0, np.cumsum(sizes[:-1])]
+    offset_map = dict(zip(period_order, offsets))
+
+
+    offset_series = df['Period'].astype(str).map(offset_map).astype(int)
+    df['t'] = offset_series + df.groupby('Period', observed=True).cumcount().to_numpy()
+
+    # --- Plott stacked area ---
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    ax.stackplot(
+        df['t'].to_numpy(),
+        (df['Nuclear_MW']/1e6).to_numpy(),
+        (df['Windonshore_MW']/1e6).to_numpy(),
+        (df['Solar_MW']/1e6).to_numpy(),
+        labels=['Nuclear',  'Wind onshore', 'Solar'],
+        colors=['pink','seagreen','violet']
+    )
+
+    ax.set_ylabel('Total power production [TW]', fontsize=20)
+    ax.set_xlabel('Hours per period', fontsize=20)
+    # Periodegrenser + pene x-ticks med periodemerking
+    boundaries = np.cumsum(sizes)[:-1]
+    for b in boundaries:
+        ax.axvline(b - 0.5, linestyle='--', linewidth=0.8, alpha=0.5)
+
+    midpoints = offsets + sizes / 2
+    ax.set_xticks(midpoints)
+    plt.yticks(fontsize=18)
+    ax.set_xticklabels(period_order, rotation=45, ha='right', fontsize=18)
+
+    ax.legend(loc='upper left',fontsize=18)
+    plt.tight_layout()
+    plt.show()
+
+def Duration_curve_power_prod(Power_generation):
+    scenario = "scenario2"
+    techs = ["Nuclear_MW",  "Windonshore_MW", "Solar_MW",]  # stack-rekkefølge
+
+    # Aggreger (summer over Node) for scenario1
+    df = (Power_generation[Power_generation["Scenario"] == scenario]
+          .groupby(["Period", "Hour"], as_index=False)[techs]
+          .sum())
+
+    # Kronologisk perioderekkefølge
+    period_order = sorted(df["Period"].unique(), key=lambda s: int(str(s).split("-")[0]))
+
+    # Samme y-akse på alle perioder (valgfritt, men bra for sammenligning)
+
+
+    for per in period_order:
+        d = df[df["Period"] == per].copy()
+
+        # Sortér timer etter total produksjon (duration curve)
+        d["Total"] = d[techs].sum(axis=1)
+        d = d.sort_values("Total", ascending=False).reset_index(drop=True)
+
+        # x-akse som % av timer (0–100)
+        x = np.linspace(0, 100, len(d))
+
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        ax.stackplot(
+            x,
+            *((d[c]/1e6).to_numpy() for c in techs),
+            labels=[c.replace("_MW", "") for c in techs],
+            colors=['pink','seagreen','violet']
+
+        )
+
+        ax.set_xlabel("% of Time",fontsize=20)
+        ax.set_ylabel("Production (TW)",fontsize=20)
+        plt.yticks(fontsize=18)
+        plt.xticks(fontsize=18)
+        ax.set_ylim(0,1.5 )  # kommenter ut hvis du vil autoskalere per periode
+        ax.legend(loc="upper right",fontsize=18)
+        plt.tight_layout()
+        plt.show()
+
+
 def Yearly_hydrogenProd_perTech(
         df, x1, x2, x3, x4,x5,x6, n_scen, n_hours,
         y_max=None, savefigure=False, results_dir=None, figurename=None

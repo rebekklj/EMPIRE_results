@@ -8,7 +8,7 @@ project_dir = Path(__file__).resolve().parents[1]
 data_dir = project_dir / "data"
 INPUT_PATH = data_dir / "Stochastic_StochasticAvailability2.csv"
 
-GEN_NAME = "Windonshore"
+GEN_NAME = "Solar"
 DECIMAL = "."
 SCENARIOS = None  # None = bruk alle scenarioer i fila
 

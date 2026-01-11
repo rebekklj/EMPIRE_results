@@ -6,8 +6,12 @@ import numpy as np
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir1= data_dir / 'Results_FINAL_BASE_NOFLEX_emcap' / 'full_model_base'
-result_dir2= data_dir / 'Results_FINAL_BASE_FLEX_emcap' / 'full_model_base'
+result_dir2= data_dir / 'Results_FINAL_BASE_NOFLEX_emcap' / 'full_model_base'
+result_dir1= data_dir / 'Results_FINAL_woALKSOEC' / 'full_model_base'
+
+result_dir3= data_dir / 'Results_FINAL_BASE_NOFLEX_emcap_opt' / 'full_model_base'
+result_dir4= data_dir / 'Results_FINAL_BASE_FLEX_emcap_opt' / 'full_model_base'
+
 
 
 def compute_period_costs(Gen_op, Gen_inv, H2_inv, Stor_el, Trans_inv, n_scen):
@@ -244,10 +248,7 @@ comp_diff = plot_total_objective_difference(
     name_scen="BASE_MOD_NOFLEX"
 )
 
-
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import re
 
 # --- Teknologifarger (fra deg) ---
@@ -362,12 +363,130 @@ def plot_production_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN"):
 
     return prod_diff_TWh
 
+def plot_production_total_diff(
+    df_base, df_scen, df_base3, df_scen3,
+    name_base="BASE", name_scen="SCEN",
+    name_base3="BASE3", name_scen3="SCEN3",
+    label1=None, label2=None,
+    width=0.35
+):
+    prod_base, _  = compute_production(df_base)
+    prod_scen, _  = compute_production(df_scen)
+    prod_base3, _ = compute_production(df_base3)
+    prod_scen3, _ = compute_production(df_scen3)
+
+    # alle teknologier som finnes i noen av datasettene
+    all_techs = sorted(
+        set(prod_base.index) | set(prod_scen.index) | set(prod_base3.index) | set(prod_scen3.index)
+    )
+
+    # reindex + fillna
+    prod_base  = prod_base.reindex(all_techs).fillna(0)
+    prod_scen  = prod_scen.reindex(all_techs).fillna(0)
+    prod_base3 = prod_base3.reindex(all_techs).fillna(0)
+    prod_scen3 = prod_scen3.reindex(all_techs).fillna(0)
+
+    # differanse per periode (GWh) -> TWh
+    diff1_TWh = (prod_scen  - prod_base)  / 1e3
+    diff2_TWh = (prod_scen3 - prod_base3) / 1e3
+
+    # total differanse over alle perioder (TWh) per teknologi
+    total_diff1 = diff1_TWh.sum(axis=1)  # Series
+    total_diff2 = diff2_TWh.sum(axis=1)  # Series
+
+    # dropp teknologier uten reell endring (i begge sammenligninger)
+    eps = 1e-8
+    techs_with_diff = [
+        t for t in all_techs
+        if (abs(float(total_diff1.loc[t])) > eps) or (abs(float(total_diff2.loc[t])) > eps)
+    ]
+
+    if label1 is None:
+        label1 = f"Moderate nuclear capex"
+    if label2 is None:
+        label2 = f"Optimistic nuclear capex"
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    x = np.array([0, 1])  # to stolper
+    bottom_pos = np.zeros(2)
+    bottom_neg = np.zeros(2)
+
+    seen_labels = set()
+
+    for tech in techs_with_diff:
+        vals = np.array([float(total_diff1.loc[tech]), float(total_diff2.loc[tech])])
+        color = tech_colors.get(tech, "lightgray")
+
+        for i in range(2):
+            v = vals[i]
+            if abs(v) <= eps:
+                continue
+
+            # kun ett legend-entry per teknologi
+            lbl = tech if tech not in seen_labels else None
+
+            if v > 0:
+                ax.bar(
+                    x[i], v, bottom=bottom_pos[i], width=width,
+                    color=color, edgecolor="black", linewidth=0.3, label=lbl
+                )
+                bottom_pos[i] += v
+            else:
+                ax.bar(
+                    x[i], v, bottom=bottom_neg[i], width=width,
+                    color=color, edgecolor="black", linewidth=0.3, label=lbl
+                )
+                bottom_neg[i] += v
+
+            if lbl is not None:
+                seen_labels.add(tech)
+
+    ax.axhline(0, color="black")
+    ax.set_xticks(x)
+    plt.yticks(fontsize=16)
+    ax.set_xticklabels([label1, label2], fontsize=14)
+    ax.set_ylabel("Total production difference [TWh]", fontsize=20)
+
+    # y-limits litt penere (basert på begge stolper)
+    y_min = min(0, bottom_neg.min()) * 1.1
+    y_max = max(0, bottom_pos.max()) * 1.1
+    if y_max == 0: y_max = 1
+    if y_min == 0: y_min = -1
+    ax.set_ylim([y_min, y_max])
+
+    # x-limits så stolpene ikke "strekker" figuren
+    ax.set_xlim(-0.6, 1.6)
+
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(
+        handles, labels, title="Technology",
+        fontsize=13, title_fontsize=14, ncol=1,
+        bbox_to_anchor=(1.02, 1), loc="upper left"
+    )
+
+    plt.grid(axis="y")
+    plt.tight_layout()
+    plt.show()
+
+    # returnér begge sammenligninger samlet
+    return pd.DataFrame(
+        {"diff_1_TWh": total_diff1, "diff_2_TWh": total_diff2},
+        index=all_techs
+    )
+
 
 Elec_genInv_FLEX=pd.read_csv(result_dir2/'results_elec_generation_inv.csv')
 Elec_genInv_NOFLEX=pd.read_csv(result_dir1/'results_elec_generation_inv.csv')
+Elec_genInv_FLEX3=pd.read_csv(result_dir4/'results_elec_generation_inv.csv')
+Elec_genInv_NOFLEX3=pd.read_csv(result_dir3/'results_elec_generation_inv.csv')
+
+
 
 df_base = Elec_genInv_FLEX     # fra Results_BASE_MOD_NOFLEX
 df_scen = Elec_genInv_NOFLEX     # fra Results_BASE_MOD_FLEX
+df_base3 = Elec_genInv_FLEX3     # fra Results_BASE_MOD_NOFLEX
+df_scen3 = Elec_genInv_NOFLEX3
 
 cap_diff_TW = plot_production_diff(
     df_base=df_base,
@@ -375,6 +494,129 @@ cap_diff_TW = plot_production_diff(
     name_base="FLEX",
     name_scen="NOFLEX",
 )
+
+res = plot_production_total_diff(df_base, df_scen, df_base3, df_scen3)
+
+
+
+def compute_installedCap(df):
+    work = df.copy()
+
+    # sikre numerisk datatype
+    work["genInstalledCap_MW"] = pd.to_numeric(
+        work["genInstalledCap_MW"], errors="coerce"
+    )
+
+    prod = work.pivot_table(
+        index="GeneratorType",
+        columns="Period",
+        values="genInstalledCap_MW",
+        aggfunc="sum",
+        fill_value=0
+    )
+
+    # sorter perioder etter startår
+    def get_year(p):
+        m = re.match(r"(\d{4})", str(p))
+        return int(m.group(1)) if m else 9999
+
+    periods = sorted(prod.columns, key=get_year)
+    prod = prod[periods]
+
+    return prod, periods
+
+
+
+def plot_installedcap_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN"):
+
+    prod_base, periods = compute_installedCap(df_base)
+    prod_scen, _       = compute_installedCap(df_scen)
+
+    # alle teknologier som finnes
+    all_techs = sorted(set(prod_base.index) | set(prod_scen.index))
+
+    prod_base = prod_base.reindex(all_techs).fillna(0)
+    prod_scen = prod_scen.reindex(all_techs).fillna(0)
+
+    # differanse
+    prod_diff = prod_scen - prod_base   # (du kommenterer GWh, men y-aksen sier GW)
+    prod_diff_TWh = prod_diff / 1e3     # for mer lesbar figur (behold hvis dette er ønsket)
+
+    x = np.arange(len(periods))
+    fig, ax = plt.subplots(figsize=(16, 12))
+
+    bottom_pos = np.zeros(len(periods))
+    bottom_neg = np.zeros(len(periods))
+
+    # ---- NYTT: filtrer bort techs med ingen endring (alle perioder = 0) ----
+    # bruker liten toleranse for å unngå flyttalls-støy
+    tol = 1e-12
+    techs_with_diff = [
+        tech for tech in all_techs
+        if np.any(np.abs(prod_diff_TWh.loc[tech].values) > tol)
+    ]
+
+    # ---- plot kun disse ----
+    for tech in techs_with_diff:
+        vals = prod_diff_TWh.loc[tech].values
+
+        pos = np.where(vals > 0, vals, 0)
+        neg = np.where(vals < 0, vals, 0)
+
+        color = tech_colors.get(tech, "lightgray")
+
+        ax.bar(x, pos, bottom=bottom_pos,
+               color=color, edgecolor="black", linewidth=0.3, label=tech)
+        bottom_pos += pos
+
+        ax.bar(x, neg, bottom=bottom_neg,
+               color=color, edgecolor="black", linewidth=0.3)
+        bottom_neg += neg
+
+    ax.axhline(0, color="black")
+
+    ax.set_xticks(x)
+    ax.set_ylim([-600, 600])
+    plt.yticks(fontsize=24)
+    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=26)
+    ax.set_ylabel("Installed capacity [GW]", fontsize=26)
+
+    # ---- NYTT: legend bare for det som faktisk plottes + én kolonne ----
+    # Siden vi satte label=tech på positive barer, kan vi hente handles/labels direkte:
+    handles, labels = ax.get_legend_handles_labels()
+
+    # (valgfritt) fjern evt. duplikater, i tilfelle matplotlib lager flere
+    seen = set()
+    uniq_h, uniq_l = [], []
+    for h, l in zip(handles, labels):
+        if l not in seen:
+            uniq_h.append(h)
+            uniq_l.append(l)
+            seen.add(l)
+
+    ax.legend(
+        uniq_h, uniq_l,
+        title="Technology",
+        fontsize=18, title_fontsize=20,
+        ncol=1,                      # én kolonne
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left"
+    )
+
+    plt.grid(axis='y')
+    plt.tight_layout()
+    plt.show()
+
+    return prod_diff_TWh
+
+
+cap_diff_TW = plot_installedcap_diff(
+    df_base=df_base,
+    df_scen=df_scen,
+    name_base="FLEX",
+    name_scen="NOFLEX",
+)
+
 
 def Yearly_hydrogenProd_perTech_diff(
         df_base, df_scen,

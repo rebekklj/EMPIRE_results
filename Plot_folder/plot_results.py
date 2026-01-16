@@ -17,17 +17,17 @@ from functions_plot import (Expected_annual_production, plot_top_map,
 
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
-result_dir = data_dir / "Results_FINAL_woALKSOEC" / "full_model_base"
+result_dir = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_cyclelim" / "full_model_base"
 plot_dir = data_dir / "Results_FINAL_woALKSOEC" #lagrer figurene i resultat mappen
 plot_dir.mkdir(exist_ok=True)
 
 Lagre_figurer =False
 figurnavn = "BASE_moderate"
 
-gen_info=('yes')
-H2_prod='yes'
-el_demand='yes'
-H2_storage='yes'
+gen_info=('no')
+H2_prod='no'
+el_demand='no'
+H2_storage='no'
 
 # In[]
 if gen_info=='yes':
@@ -203,6 +203,105 @@ if H2_storage=='yes':
         gasscenario=1,
         scenario="scenario2",  # eller None for snitt
     )
+
+
+from pathlib import Path
+import re
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+def _to_year(period_value):
+    """
+    Period i output er ofte inv_per[int(i-1)] (typisk år som tekst).
+    Prøver å hente ut et årstall for sortering. Hvis ikke: behold original.
+    """
+    s = str(period_value)
+    m = re.search(r"(19\d{2}|20\d{2}|21\d{2})", s)
+    return int(m.group(1)) if m else s
+
+
+def map_tech(generator_type: str):
+    s = str(generator_type).lower()
+
+    # Solar
+    if "solar" in s:
+        return "Solar"
+
+    # Onshore wind (tilpass gjerne til dine faktiske navn)
+    if "wind" in s and ("onshr" in s or "onshore" in s):
+        return "Wind_onshr"
+
+    # Nuclear
+    if "nuclear" in s:
+        return "Nuclear"
+
+    # Bio (biomass/bioenergy etc.)
+    if "bio" in s or "biomass" in s:
+        return "Bio"
+
+    # Lignite
+    if "lignite" in s:
+        return "Lignite"
+
+    return None
+
+
+def plot_capacity_factors(result_dir: str):
+    result_dir = Path(result_dir)
+    inv_file = result_dir / "results_elec_generation_inv.csv"
+
+    if not inv_file.exists():
+        raise FileNotFoundError(
+            f"Fant ikke {inv_file}. Sørg for at include_results inkluderer "
+            f"'results_elec_generation_inv' i kjøringen."
+        )
+
+    df = pd.read_csv(inv_file)
+
+    required = {"GeneratorType", "Period", "genInstalledCap_MW", "genExpectedAnnualProduction_GWh"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Mangler kolonner i {inv_file.name}: {sorted(missing)}")
+
+    df["Tech"] = df["GeneratorType"].apply(map_tech)
+    df = df[df["Tech"].notna()].copy()
+
+    # (valgfritt) print hva som faktisk ble mappa
+    print("GeneratorType som inngår per tech:")
+    for tech, gtypes in df.groupby("Tech")["GeneratorType"].unique().items():
+        print(f"  {tech}: {sorted(map(str, gtypes))}")
+
+    # Aggreger CF per periode og tech:
+    # CF = sum(prod_GWh) / sum(installed_MW * 8760 / 1000)
+    df["cap_gwh"] = df["genInstalledCap_MW"] * 8760.0 / 1000.0
+    grouped = (
+        df.groupby(["Period", "Tech"], as_index=False)
+          .agg(prod_gwh=("genExpectedAnnualProduction_GWh", "sum"),
+               cap_gwh=("cap_gwh", "sum"))
+    )
+    grouped["CapacityFactor"] = grouped["prod_gwh"] / grouped["cap_gwh"]
+    grouped["YearSort"] = grouped["Period"].apply(_to_year)
+
+    # Pivot for plotting
+    pivot = (
+        grouped.sort_values("YearSort")
+               .pivot(index="Period", columns="Tech", values="CapacityFactor")
+    )
+
+    ax = pivot.plot(marker="o")
+    ax.set_ylabel("Kapasitetsfaktor (andel av 1.0)")
+    ax.set_xlabel("Periode")
+    ax.set_title("Kapasitetsfaktor per teknologi")
+    ax.grid(True, axis="y", alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    return grouped
+
+
+# Eksempel:
+grouped_df = plot_capacity_factors(result_dir)
 
 
 

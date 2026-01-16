@@ -1276,6 +1276,7 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
     # ---- 2) Koordinater (lon, lat) ----
     node_coords = {
         "Austria": (14.55, 47.59),
+        "Netherlands": (5.29, 52.13),
         "Belgium": (4.47, 50.85),
         "BosniaH": (17.67, 43.92),
         "Bulgaria": (25.48, 42.73),
@@ -1290,7 +1291,6 @@ def HydrogenProd_piechart(df, n_hours, n_scen, savefigure=False, figurename=None
         "Italy": (12.57, 42.83),
         "Luxemb.": (6.13, 49.61),
         "Macedonia": (21.75, 41.61),
-        "Netherlands": (5.29, 52.13),
         "NO1": (10.98, 60.62),
         "NO2": (7.38, 59.15),
         "NO3": (8.0, 62.47),

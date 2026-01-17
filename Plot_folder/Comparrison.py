@@ -15,7 +15,7 @@ project_dir = Path(__file__).resolve().parents[1]  # EMPIRE_results_git
 data_dir = project_dir / "data"
 
 result_dir1 = data_dir / "Results_FINAL_BASE_constantH2" / "full_model_base"
-result_dir2 = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_cyclelim" / "full_model_base"
+result_dir2 = data_dir / "Results_FINAL_BASE_FLEX_emcap_cyclelim" / "full_model_base"
 result_dir3 = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_opt" / "full_model_base"
 result_dir4 = data_dir / "Results_FINAL_BASE_FLEX_emcap_opt" / "full_model_base"
 
@@ -752,13 +752,13 @@ def Yearly_hydrogenProd_perTech_diff(
 
     ax.axhline(0, color="black", linewidth=1)
     ax.set_xticks(pos_x)
-    ax.set_ylim([-12, 12])
+    ax.set_ylim([-15, 15])
     ax.set_xticklabels(PERIODS_ORDER, rotation=0)
     ax.tick_params(axis="x", labelsize=16)
     ax.tick_params(axis="y", labelsize=16)
 
     ax.set_xlabel("Investment period", fontsize=18)
-    ax.set_ylabel(f"Δ annual hydrogen production [{name_scen} – {name_base}] [M ton]", fontsize=18)
+    ax.set_ylabel(f"Δ annual hydrogen production [M ton]", fontsize=18)
     ax.grid(axis="y", linestyle="--", alpha=0.5)
     ax.legend(loc="upper left", fontsize=16, title="Technology", title_fontsize=18)
 
@@ -839,9 +839,8 @@ def hydrogen_storage_capacity_diff(
     ax.axhline(0, color="black", linewidth=1)
     ax.set_xticks(x)
     ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=12)
-    ax.set_ylabel(f"Hydrogen storage capacity difference [{name_scen} – {name_base}] [Mton]", fontsize=14)
+    ax.set_ylabel(f"Hydrogen storage capacity difference  [Mton]", fontsize=14)
     ax.set_xlabel("Period", fontsize=14)
-    ax.set_title(f"Hydrogen storage capacity per period\n{name_scen} – {name_base}", fontsize=16)
 
     ax.tick_params(axis="y", labelsize=12)
     ax.grid(axis="y", linestyle="--", alpha=0.5)

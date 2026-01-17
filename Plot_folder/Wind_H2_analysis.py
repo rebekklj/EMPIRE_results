@@ -16,7 +16,7 @@ Onshorewind='Windonshore'
 DECIMAL = "."
 SCENARIOS = None
 COUNTRY = "Italy"
-PERIOD = 6
+PERIOD = 4
 
 H2_demand= pd.read_excel(H2_demand_data, sheet_name='HydrogenDemandProfile',decimal=',',skiprows=2)
 H2_demand["H2_norm"] = (H2_demand["HydrogenDemand"] /H2_demand.groupby(["Node", "Period"])["HydrogenDemand"].transform("max"))

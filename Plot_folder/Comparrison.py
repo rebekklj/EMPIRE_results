@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 project_dir = Path(__file__).resolve().parents[1]  # EMPIRE_results_git
 data_dir = project_dir / "data"
 
-result_dir1 = data_dir / "Results_FINAL_BASE_constantH2" / "full_model_base"
+result_dir1 = data_dir / "Results_woH2_storage" / "full_model_base"
 result_dir2 = data_dir / "Results_FINAL_BASE_FLEX_emcap_cyclelim" / "full_model_base"
 result_dir3 = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_opt" / "full_model_base"
 result_dir4 = data_dir / "Results_FINAL_BASE_FLEX_emcap_opt" / "full_model_base"
@@ -752,7 +752,7 @@ def Yearly_hydrogenProd_perTech_diff(
 
     ax.axhline(0, color="black", linewidth=1)
     ax.set_xticks(pos_x)
-    ax.set_ylim([-15, 15])
+    ax.set_ylim([-20, 20])
     ax.set_xticklabels(PERIODS_ORDER, rotation=0)
     ax.tick_params(axis="x", labelsize=16)
     ax.tick_params(axis="y", labelsize=16)

@@ -257,8 +257,8 @@ def plot_diff_heatmap(
     im = ax.imshow(vals, aspect="auto", interpolation="nearest", cmap=cmap, norm=norm)
 
     ax.set_title(title)
-    ax.set_xlabel("Import node")
-    ax.set_ylabel("Export node")
+    ax.set_xlabel("Import node",fontsize=12)
+    ax.set_ylabel("Export node",fontsize=12)
 
     if show_tick_every is None:
         show_tick_every = max(1, n // 45)
@@ -268,8 +268,8 @@ def plot_diff_heatmap(
     ax.set_xticks(xt)
     ax.set_yticks(yt)
 
-    ax.set_xticklabels([mat.columns[i] for i in xt], rotation=90, fontsize=9)
-    ax.set_yticklabels([mat.index[i] for i in yt], fontsize=9)
+    ax.set_xticklabels([mat.columns[i] for i in xt], rotation=90, fontsize=12)
+    ax.set_yticklabels([mat.index[i] for i in yt], fontsize=12)
 
     cbar = fig.colorbar(im, ax=ax)
     cbar.set_label(cbar_label)
@@ -287,7 +287,7 @@ def plot_diff_heatmap(
             for j in range(n):
                 v = vals[i, j]
                 if abs(v) >= annotate_min_abs:
-                    ax.text(j, i, format(v, annotate_fmt), ha="center", va="center", fontsize=6)
+                    ax.text(j, i, format(v, annotate_fmt), ha="center", va="center", fontsize=12)
 
     fig.tight_layout()
     if savepath is not None:
@@ -362,7 +362,7 @@ def diff_matrix_from_dirs(
     )
 
     m1, m2 = align_square(m1, m2)
-    diff = m2 - m1
+    diff = m1 - m2
 
     if drop_zeros:
         diff = drop_all_zero_rows_cols(diff, tol=zero_tol)
@@ -389,7 +389,7 @@ project_dir = Path(__file__).resolve().parents[1]
 data_dir = project_dir / "data"
 
 result_dir1 = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_cyclelim" / "full_model_base"
-result_dir2 = data_dir / "Results_FINAL_optimistic_price_scen" / "full_model_base"
+result_dir2 = data_dir / "Results_FINAL_BASE_FLEX_emcap_cyclelim" / "full_model_base"
 
 seasScale = {
     "winter": 26.0, "spring": 26.0, "summer": 26.0, "fall": 26.0,
@@ -399,19 +399,19 @@ seasScale = {
 diff_h2, unit_h2 = diff_matrix_from_dirs(
     result_dir1, result_dir2,
     loader_kwargs=H2_PIPE_LOADER,
-    period="2045-2050",
+    period="2050-2055",
     mode="expected_TWh",
     season_scale=seasScale,
     value_is="H2_ton_per_h",
     h2_mwh_per_ton=33.3,
-    top_k=50,
+    top_k=15,
     zero_tol=1e-9,
 )
 
 fig, ax = plot_diff_heatmap(
     diff_h2,
-    title="H2 pipeline activity difference (dir2 - dir1) 2050-2055",
-    cbar_label=f"Difference ({unit_h2}) [dir2 - dir1]",
+    title="H2 pipeline export difference 2050-2055",
+    cbar_label=f"Difference [ton] BCONSTANT - BFLEX",
     grid=True,
     annotate=True,
     annotate_min_abs=None,

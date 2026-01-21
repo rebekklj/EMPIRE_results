@@ -1,5 +1,5 @@
-from pathlib import Path
-import pandas as pd
+from __future__ import annotations
+
 from pathlib import Path
 import re
 
@@ -8,319 +8,52 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-# -----------------------------
-# Paths
-# -----------------------------
+# =============================================================================
+# CONFIG: scenarios / paths
+# =============================================================================
 project_dir = Path(__file__).resolve().parents[1]  # EMPIRE_results_git
 data_dir = project_dir / "data"
 
-result_dir1 = data_dir / "Results_woH2_storage" / "full_model_base"
-result_dir2 = data_dir / "Results_FINAL_BASE_FLEX_emcap_cyclelim" / "full_model_base"
-result_dir3 = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_opt" / "full_model_base"
-result_dir4 = data_dir / "Results_FINAL_BASE_FLEX_emcap_opt" / "full_model_base"
+SCENARIOS = {
+    # Used in comparisons below
+    "NOFLEX": data_dir / "Results_FINAL_BASE_NOFLEX_emcap_cyclelim" / "full_model_base",
+    "FLEX":   data_dir / "Results_FINAL_woALKSOEC" / "full_model_base",
 
+    # Optional extra pair in "BSTORAGE vs BFLAT" comparison below
+    "NOFLEX3": data_dir / "Results_final_SOECpess" / "full_model_base",
+    "FLEX3":   data_dir / "Results_FINAL_woALKSOEC" / "full_model_base",
+}
 
-# -----------------------------
-# Constants / helpers
-# -----------------------------
-PERIODS_ORDER = ["2020-2025", "2025-2030", "2030-2035", "2035-2040",
-                 "2040-2045", "2045-2050", "2050-2055"]
+# Primary comparison (used for objective / production / capacity / H2 sections)
+BASE_NAME = "FLEX"
+SCEN_NAME = "NOFLEX"
 
+# Secondary comparison (used for the two-bar total-production plot)
+BASE2_NAME = "FLEX3"
+SCEN2_NAME = "NOFLEX3"
+
+# Labels for the two-bar plot (these are display labels, not scenario keys)
+LABEL1 = "SOEC moderate"
+LABEL2 = "SOEC pessemistic"
+
+# Stochastic scenarios count used to scale operational costs and seasonal scaling
+N_SCEN = 2
+
+# Period ordering (kept fixed)
+PERIODS_ORDER = [
+    "2020-2025", "2025-2030", "2030-2035", "2035-2040",
+    "2040-2045", "2045-2050", "2050-2055",
+]
+
+# =============================================================================
+# PLOT COLORS
+# =============================================================================
 OBJ_COLORS_11 = [
     "teal", "darkturquoise", "orange", "yellowgreen", "seagreen",
-    "plum", "moccasin", "hotpink", "darkslategrey", "brown", "dodgerblue"
+    "plum", "moccasin", "hotpink", "darkslategrey", "brown", "dodgerblue",
 ]
 OBJ_COLORS_12 = OBJ_COLORS_11 + ["darkgrey"]
 
-
-def _bn(x):
-    return x / 1e9
-
-
-def _period_sum(df, col, denom=1.0):
-    return df.groupby("Period")[col].sum() / denom
-
-
-def _cum_to_periodic(cum_series):
-    cum_series = cum_series.sort_index()
-    return cum_series.diff().fillna(cum_series)
-
-
-def _print_series(title, s, unit="", decimals=3):
-    s = s.copy()
-    try:
-        s = s.astype(float)
-    except Exception:
-        pass
-    print(f"\n{title}")
-    for k, v in s.items():
-        if isinstance(v, (float, np.floating, int, np.integer)):
-            print(f"  {k}: {v:.{decimals}f}{unit}")
-        else:
-            print(f"  {k}: {v}{unit}")
-
-
-def _print_top(title, s, n=10, unit="", decimals=3):
-    s = s.astype(float).sort_values(key=lambda x: x.abs(), ascending=False)
-    print(f"\n{title} (topp {min(n, len(s))} etter |verdi|)")
-    for k, v in s.head(n).items():
-        print(f"  {k}: {v:.{decimals}f}{unit}")
-
-
-# -----------------------------
-# Objective cost decomposition
-# -----------------------------
-def compute_period_costs(Gen_op, Gen_inv, H2_inv, Stor_el, Trans_inv, OffConv_inv, OBJ_val, H2_op, n_scen):
-    # Generator drift (diskontert i input, skaleres med n_scen)
-    gen_op_period = _bn(_period_sum(Gen_op, "OperationalCost_Euro", denom=n_scen))
-
-    # Generator investering
-    gen_inv_period = _bn(_period_sum(Gen_inv, "genInvestedCost_Euro"))
-
-    # Offshore converter inv
-    offConv_period = _bn(_period_sum(OffConv_inv, "offshoreConversionInvestedCost_Euro"))
-
-    # Industri operational (hydrogen related op cost)
-    H2_op_period = _bn(_period_sum(H2_op, "HydrogenRelatedOperationalCost_Euro", denom=n_scen))
-
-    # Hydrogen: kumulative -> periodiske (produksjonsinvest)
-    h2_prod_cols = [
-        "Discounted PEM_yellow cost [EUR]",
-        "Discounted PEM_green cost [EUR]",
-        "Discounted PEM_import cost [EUR]",
-        "Discounted ALK cost [EUR]",
-        "Discounted SOEC cost [EUR]",
-        "Discounted Reformer cost [EUR]",
-    ]
-    h2_prod_cum = H2_inv.groupby("Period")[h2_prod_cols].sum().sum(axis=1)
-    h2_prod_period = _bn(_cum_to_periodic(h2_prod_cum))
-
-    # Hydrogen pipeline (kumulativ -> periodisk)
-    h2_pipe_cum = H2_inv.groupby("Period")["Discounted pipeline cost [EUR]"].sum()
-    h2_pipe_period = _bn(_cum_to_periodic(h2_pipe_cum))
-
-    # Repurposed H2 pipe + CO2 pipe
-    re_h2_pipe_period = _bn(_period_sum(Trans_inv, "RepurposedPipeilineInvCost"))
-    CO2_pipe_period = _bn(_period_sum(Trans_inv, "CO2PipelineInvCost"))
-
-    # Hydrogen storage (kumulativ -> periodisk)
-    h2_stor_cum = H2_inv.groupby("Period")["Discounted storage cost [EUR]"].sum()
-    h2_stor_period = _bn(_cum_to_periodic(h2_stor_cum))
-
-    # Power storage & transmission inv
-    pstor_period = _bn(_period_sum(Stor_el, "storInvestedCost_Euro"))
-    ptrans_period = _bn(_period_sum(Trans_inv, "TransmissionInvCost"))
-
-    # OBJ (bn EUR)
-    OBJ_value = (
-        OBJ_val.loc[OBJ_val["key"].str.contains("Scientific notation", na=False), "value"].iloc[0]
-    ) / 1e9
-
-    df = pd.DataFrame({
-        "Generator operational": gen_op_period,
-        "Generator investment": gen_inv_period,
-        "Hydrogen production inv.": h2_prod_period,
-        "Hydrogen pipeline inv.": h2_pipe_period,
-        "Hydrogen repurposed pipeline": re_h2_pipe_period,
-        "Hydrogen storage inv.": h2_stor_period,
-        "Industry operational": H2_op_period,
-        "Power storage inv.": pstor_period,
-        "Power transmission inv.": ptrans_period,
-        "CO2 pipeline inv.": CO2_pipe_period,
-        "Offshore converter inv.": offConv_period,
-    })
-
-    # ---- Print tall per scenario (nyttig for rapport) ----
-    comp = df.sum(axis=0)
-    other = OBJ_value - comp.sum()
-    print("\n==============================")
-    print("compute_period_costs: nivå (bn EUR)")
-    print(f"  OBJ total: {OBJ_value:.3f} bn EUR")
-    print(f"  Sum komponenter: {comp.sum():.3f} bn EUR")
-    print(f"  Other (=OBJ - sum): {other:.3f} bn EUR")
-    _print_top("  Komponent-summer", comp, n=20, unit=" bn EUR", decimals=3)
-
-    # ---- Plot: én stacked stolpe for total (komponent-summer + Other) ----
-    comp["Other"] = other
-    components = comp.index.tolist()
-    values = comp.values
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    x = 0.0
-    bar_width = 0.5
-    bottom_pos, bottom_neg = 0.0, 0.0
-
-    for name, val, col in zip(components, values, OBJ_COLORS_12):
-        if np.isclose(val, 0.0):
-            continue
-        bottom = bottom_pos if val > 0 else bottom_neg
-        ax.bar(x, val, width=bar_width, bottom=bottom, color=col,
-               edgecolor="black", linewidth=0.5, label=name)
-        if val > 0:
-            bottom_pos += val
-        else:
-            bottom_neg += val
-
-    ax.set_xlim(-1, 1)
-    ax.set_xticks([x])
-    plt.yticks(fontsize=16)
-    ax.axhline(0, color="black", linewidth=1)
-    plt.grid(axis="y", linestyle="--")
-    ax.set_axisbelow(True)
-    ax.set_ylabel("Objective value [bn EUR]", fontsize=18)
-
-    handles, labels = ax.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    ax.legend(by_label.values(), by_label.keys(),
-              title="Components", fontsize=14, title_fontsize=16,
-              loc="upper left", bbox_to_anchor=(1.02, 1.0))
-
-    plt.tight_layout()
-    plt.show()
-
-    return df, OBJ_value
-
-
-def plot_OBJ_generator_inv_diff(df_base, df_scen, name_base="BASE_MOD_NOFLEX", name_scen="BASE_MOD_FLEX"):
-    # Align periods
-    df_base = df_base.reindex(PERIODS_ORDER).fillna(0)
-    df_scen = df_scen.reindex(PERIODS_ORDER).fillna(0)
-
-    df_diff = df_scen - df_base  # scenario - base
-
-    # ---- Print tall for rapport ----
-    print("\n==============================")
-    print(f"OBJ-komponenter per periode: {name_scen} – {name_base} (bn EUR)")
-    _print_series("Total diff per periode (sum over komponenter)",
-                  df_diff.sum(axis=1), unit=" bn EUR", decimals=3)
-    _print_top("Total diff per komponent (sum over perioder)",
-               df_diff.sum(axis=0), n=50, unit=" bn EUR", decimals=3)
-
-    # ---- Plot ----
-    fig, ax = plt.subplots(figsize=(12, 7))
-    x = np.arange(len(PERIODS_ORDER))
-    bottom_pos = np.zeros(len(PERIODS_ORDER))
-    bottom_neg = np.zeros(len(PERIODS_ORDER))
-
-    for col, color in zip(df_diff.columns, OBJ_COLORS_11):
-        vals = df_diff[col].values
-        pos = np.where(vals > 0, vals, 0.0)
-        neg = np.where(vals < 0, vals, 0.0)
-        ax.bar(x, pos, bottom=bottom_pos, color=color, label=col)
-        bottom_pos += pos
-        ax.bar(x, neg, bottom=bottom_neg, color=color)
-        bottom_neg += neg
-
-    ax.axhline(0, color="black", linewidth=1)
-    ax.set_xticks(x)
-    ax.set_xticklabels(PERIODS_ORDER, rotation=30, ha="right")
-    ax.tick_params(axis="y", labelsize=14)
-    ax.tick_params(axis="x", labelsize=14)
-    ax.set_ylim([-130, 130])
-    ax.set_xlabel("Period", fontsize=16)
-    ax.set_ylabel("Cost difference [bn EUR]", fontsize=16)
-    ax.legend(loc="upper left", fontsize=12, bbox_to_anchor=(1.02, 1.0))
-    plt.grid(axis="y")
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_total_objective_difference(df_base, OBJ_base, df_scen, OBJ_scen,
-                                    name_base="BASE", name_scen="SCENARIO"):
-    df_diff = df_scen - df_base
-    comp_diff = df_diff.sum(axis=0)  # bn EUR
-    obj_total_diff = OBJ_scen - OBJ_base
-    other = obj_total_diff - comp_diff.sum()
-    comp_diff = comp_diff.copy()
-    comp_diff["Other"] = other
-
-    # ---- Print tall for rapport ----
-    print("\n==============================")
-    print(f"Total objective diff: {name_scen} – {name_base} (bn EUR)")
-    print(f"  OBJ_scen: {OBJ_scen:.3f}")
-    print(f"  OBJ_base: {OBJ_base:.3f}")
-    print(f"  ΔOBJ:     {obj_total_diff:.3f}")
-    print(f"  Sum(Δkomponenter uten Other): {comp_diff.drop('Other').sum():.3f}")
-    print(f"  Other: {other:.3f}")
-    _print_top("Δ per komponent (inkl Other)", comp_diff, n=50, unit=" bn EUR", decimals=3)
-
-    # ---- Plot ----
-    components = comp_diff.index.tolist()
-    values = comp_diff.values
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    x = 0.0
-    bar_width = 0.5
-    bottom_pos, bottom_neg = 0.0, 0.0
-
-    for name, val, col in zip(components, values, OBJ_COLORS_12):
-        if np.isclose(val, 0.0):
-            continue
-        bottom = bottom_pos if val > 0 else bottom_neg
-        ax.bar(x, val, width=bar_width, bottom=bottom, color=col,
-               edgecolor="black", linewidth=0.5, label=name)
-        if val > 0:
-            bottom_pos += val
-        else:
-            bottom_neg += val
-
-    ax.set_xlim(-1, 1)
-    ax.set_xticks([x])
-    plt.yticks(fontsize=16)
-    ax.axhline(0, color="black", linewidth=1)
-    plt.grid(axis="y", linestyle="--")
-    ax.set_axisbelow(True)
-    ax.set_ylabel("Objective value difference [bn EUR]", fontsize=18)
-
-    handles, labels = ax.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    ax.legend(by_label.values(), by_label.keys(),
-              title="Components", fontsize=14, title_fontsize=16,
-              loc="upper left", bbox_to_anchor=(1.02, 1.0))
-
-    plt.tight_layout()
-    plt.show()
-
-    return comp_diff
-
-
-# -----------------------------
-# Loading results
-# -----------------------------
-def load_results(result_dir: Path):
-    Gen_op = pd.read_csv(
-        result_dir / "results_objective_components_operational_costs.csv",
-        skiprows=list(range(65353, 65369)),
-    )
-    H2_op = pd.read_csv(
-        result_dir / "results_objective_components_operational_costs.csv",
-        skiprows=65354,
-    )
-    Gen_inv = pd.read_csv(
-        result_dir / "results_objective_components_generation_inv_costs.csv",
-        skiprows=list(range(5447, 5456)),
-    )
-    OffConv_inv = pd.read_csv(
-        result_dir / "results_objective_components_generation_inv_costs.csv",
-        skiprows=5448,
-    )
-    H2_inv = pd.read_csv(result_dir / "results_hydrogen_costs.csv")
-    Stor_el = pd.read_csv(result_dir / "results_objective_components_storage_inv_costs.csv")
-    Trans_inv = pd.read_csv(result_dir / "results_transmission_inv_costs.csv")
-    OBJ_val = pd.read_csv(
-        result_dir / "results_objective.csv",
-        sep=",",
-        header=None,
-        names=["key", "value"],
-        skipinitialspace=True,
-    )
-    OBJ_val["value"] = pd.to_numeric(OBJ_val["value"], errors="coerce")
-    return Gen_op, Gen_inv, H2_inv, Stor_el, Trans_inv, OffConv_inv, OBJ_val, H2_op
-
-
-# -----------------------------
-# Production / capacity tech colors
-# -----------------------------
 tech_colors = {
     "Bio": "darkslategrey",
     "Bioexisting": "mediumaquamarine",
@@ -348,11 +81,424 @@ tech_colors = {
 }
 
 
-def compute_production(df):
+# =============================================================================
+# HELPERS: numeric + printing
+# =============================================================================
+def _bn(x: pd.Series | float) -> pd.Series | float:
+    """EUR -> bn EUR"""
+    return x / 1e9
+
+
+def _period_sum(df: pd.DataFrame, col: str, denom: float = 1.0) -> pd.Series:
+    return df.groupby("Period")[col].sum() / denom
+
+
+def _cum_to_periodic(cum_series: pd.Series) -> pd.Series:
+    cum_series = cum_series.sort_index()
+    return cum_series.diff().fillna(cum_series)
+
+
+def _align_series(a: pd.Series, b: pd.Series, fill_value: float = 0.0):
+    idx = a.index.union(b.index)
+    return a.reindex(idx).fillna(fill_value), b.reindex(idx).fillna(fill_value)
+
+
+def _print_block_header(title: str, *, base_name: str, base_dir: Path, scen_name: str, scen_dir: Path):
+    print("\n" + "=" * 80)
+    print(title)
+    print(f"Comparison: {scen_name} (SCEN)  vs  {base_name} (BASE)")
+    print(f"  BASE dir: {base_dir}")
+    print(f"  SCEN dir: {scen_dir}")
+    print("=" * 80)
+
+
+def _print_series_expr(
+    title: str,
+    scen: pd.Series,
+    base: pd.Series,
+    *,
+    unit: str = "",
+    decimals: int = 3,
+    scen_name: str = "SCEN",
+    base_name: str = "BASE",
+    fill_value: float = 0.0,
+):
+    scen = pd.Series(scen).astype(float)
+    base = pd.Series(base).astype(float)
+    scen, base = _align_series(scen, base, fill_value=fill_value)
+
+    print(f"\n{title}")
+    for k in scen.index:
+        a = float(scen.loc[k])
+        b = float(base.loc[k])
+        print(f"  {k}: ({a:.{decimals}f}{unit}) - ({b:.{decimals}f}{unit})   [{scen_name} - {base_name}]")
+
+
+def _print_top_expr(
+    title: str,
+    scen: pd.Series,
+    base: pd.Series,
+    *,
+    n: int = 10,
+    unit: str = "",
+    decimals: int = 3,
+    scen_name: str = "SCEN",
+    base_name: str = "BASE",
+    fill_value: float = 0.0,
+):
+    scen = pd.Series(scen).astype(float)
+    base = pd.Series(base).astype(float)
+    scen, base = _align_series(scen, base, fill_value=fill_value)
+
+    diff = scen - base
+    order = diff.abs().sort_values(ascending=False).index
+    n_show = min(n, len(order))
+
+    print(f"\n{title} (top {n_show} by |diff|)")
+    for k in order[:n_show]:
+        a = float(scen.loc[k])
+        b = float(base.loc[k])
+        print(f"  {k}: ({a:.{decimals}f}{unit}) - ({b:.{decimals}f}{unit})   [{scen_name} - {base_name}]")
+
+
+def _require_exists(path: Path, what: str):
+    if not path.exists():
+        raise FileNotFoundError(f"Missing {what}: {path}")
+
+
+# =============================================================================
+# LOADERS
+# =============================================================================
+def load_objective_results(result_dir: Path):
+    """
+    Loads objective decomposition inputs.
+    NOTE: Your CSVs appear to contain multiple sections with repeated headers; skiprows are kept as-is.
+    """
+    _require_exists(result_dir, "result_dir")
+
+    gen_op = pd.read_csv(
+        result_dir / "results_objective_components_operational_costs.csv",
+        skiprows=list(range(65353, 65369)),
+    )
+    h2_op = pd.read_csv(
+        result_dir / "results_objective_components_operational_costs.csv",
+        skiprows=65354,
+    )
+    gen_inv = pd.read_csv(
+        result_dir / "results_objective_components_generation_inv_costs.csv",
+        skiprows=list(range(5447, 5456)),
+    )
+    offconv_inv = pd.read_csv(
+        result_dir / "results_objective_components_generation_inv_costs.csv",
+        skiprows=5448,
+    )
+    h2_inv = pd.read_csv(result_dir / "results_hydrogen_costs.csv")
+    stor_el = pd.read_csv(result_dir / "results_objective_components_storage_inv_costs.csv")
+    trans_inv = pd.read_csv(result_dir / "results_transmission_inv_costs.csv")
+    obj_val = pd.read_csv(
+        result_dir / "results_objective.csv",
+        sep=",",
+        header=None,
+        names=["key", "value"],
+        skipinitialspace=True,
+    )
+    obj_val["value"] = pd.to_numeric(obj_val["value"], errors="coerce")
+    return gen_op, gen_inv, h2_inv, stor_el, trans_inv, offconv_inv, obj_val, h2_op
+
+
+def load_elec_gen_inv(result_dir: Path) -> pd.DataFrame:
+    return pd.read_csv(result_dir / "results_elec_generation_inv.csv")
+
+
+def load_h2_prod(result_dir: Path) -> pd.DataFrame:
+    return pd.read_csv(result_dir / "results_hydrogen_production.csv")
+
+
+def load_h2_storage_inv(result_dir: Path) -> pd.DataFrame:
+    return pd.read_csv(result_dir / "results_hydrogen_storage_inv.csv")
+
+
+# =============================================================================
+# OBJECTIVE: compute + plots
+# =============================================================================
+def compute_period_costs(
+    gen_op: pd.DataFrame,
+    gen_inv: pd.DataFrame,
+    h2_inv: pd.DataFrame,
+    stor_el: pd.DataFrame,
+    trans_inv: pd.DataFrame,
+    offconv_inv: pd.DataFrame,
+    obj_val: pd.DataFrame,
+    h2_op: pd.DataFrame,
+    n_scen: int,
+):
+    """
+    Returns:
+      - df_period: rows=Period, cols=components, values=bn EUR per period
+      - OBJ_value: total objective bn EUR (scalar)
+    """
+    # Generator operational (discounted in file; scale by number of stochastic scenarios)
+    gen_op_period = _bn(_period_sum(gen_op, "OperationalCost_Euro", denom=n_scen))
+
+    # Generator investment
+    gen_inv_period = _bn(_period_sum(gen_inv, "genInvestedCost_Euro"))
+
+    # Offshore converter investment
+    offconv_period = _bn(_period_sum(offconv_inv, "offshoreConversionInvestedCost_Euro"))
+
+    # Industry operational (hydrogen related operational cost)
+    h2_op_period = _bn(_period_sum(h2_op, "HydrogenRelatedOperationalCost_Euro", denom=n_scen))
+
+    # H2 production investments: cumulative -> periodic
+    h2_prod_cols = [
+        "Discounted PEM_yellow cost [EUR]",
+        "Discounted PEM_green cost [EUR]",
+        "Discounted PEM_import cost [EUR]",
+        "Discounted ALK cost [EUR]",
+        "Discounted SOEC cost [EUR]",
+        "Discounted Reformer cost [EUR]",
+    ]
+    h2_prod_cum = h2_inv.groupby("Period")[h2_prod_cols].sum().sum(axis=1)
+    h2_prod_period = _bn(_cum_to_periodic(h2_prod_cum))
+
+    # H2 pipeline: cumulative -> periodic
+    h2_pipe_cum = h2_inv.groupby("Period")["Discounted pipeline cost [EUR]"].sum()
+    h2_pipe_period = _bn(_cum_to_periodic(h2_pipe_cum))
+
+    # Repurposed H2 pipeline + CO2 pipeline (already periodic in Trans_inv file)
+    re_h2_pipe_period = _bn(_period_sum(trans_inv, "RepurposedPipeilineInvCost"))
+    co2_pipe_period = _bn(_period_sum(trans_inv, "CO2PipelineInvCost"))
+
+    # H2 storage: cumulative -> periodic
+    h2_stor_cum = h2_inv.groupby("Period")["Discounted storage cost [EUR]"].sum()
+    h2_stor_period = _bn(_cum_to_periodic(h2_stor_cum))
+
+    # Power storage & transmission investment
+    pstor_period = _bn(_period_sum(stor_el, "storInvestedCost_Euro"))
+    ptrans_period = _bn(_period_sum(trans_inv, "TransmissionInvCost"))
+
+    # Total objective (bn EUR)
+    obj_value = (
+        obj_val.loc[obj_val["key"].str.contains("Scientific notation", na=False), "value"].iloc[0]
+    ) / 1e9
+
+    df_period = pd.DataFrame({
+        "Generator operational": gen_op_period,
+        "Generator investment": gen_inv_period,
+        "Hydrogen production inv.": h2_prod_period,
+        "Hydrogen pipeline inv.": h2_pipe_period,
+        "Hydrogen repurposed pipeline": re_h2_pipe_period,
+        "Hydrogen storage inv.": h2_stor_period,
+        "Industry operational": h2_op_period,
+        "Power storage inv.": pstor_period,
+        "Power transmission inv.": ptrans_period,
+        "CO2 pipeline inv.": co2_pipe_period,
+        "Offshore converter inv.": offconv_period,
+    })
+
+    return df_period, float(obj_value)
+
+
+def plot_objective_single_bar(df_period: pd.DataFrame, obj_value_bn: float, *, title: str):
+    """
+    One stacked bar showing component sums + 'Other' = OBJ - sum(components).
+    """
+    comp = df_period.sum(axis=0)  # bn EUR per component (summed over periods)
+    other = obj_value_bn - comp.sum()
+
+    # Print (single scenario level)
+    print("\n" + "-" * 80)
+    print(title)
+    print(f"OBJ total: {obj_value_bn:.3f} bn EUR")
+    print(f"Sum components: {comp.sum():.3f} bn EUR")
+    print(f"Other (=OBJ - sum): {other:.3f} bn EUR")
+
+    comp_plot = comp.copy()
+    comp_plot["Other"] = other
+
+    # Plot
+    components = comp_plot.index.tolist()
+    values = comp_plot.values
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    x = 0.0
+    bar_width = 0.5
+    bottom_pos, bottom_neg = 0.0, 0.0
+
+    for name, val, col in zip(components, values, OBJ_COLORS_12):
+        if np.isclose(val, 0.0):
+            continue
+        bottom = bottom_pos if val > 0 else bottom_neg
+        ax.bar(x, val, width=bar_width, bottom=bottom, color=col,
+               edgecolor="black", linewidth=0.5, label=name)
+        if val > 0:
+            bottom_pos += val
+        else:
+            bottom_neg += val
+
+    ax.set_xlim(-1, 1)
+    ax.set_xticks([x])
+    ax.axhline(0, color="black", linewidth=1)
+    ax.set_ylabel("Objective value [bn EUR]", fontsize=14)
+    ax.grid(axis="y", linestyle="--")
+    ax.set_axisbelow(True)
+
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax.legend(by_label.values(), by_label.keys(),
+              title="Components", fontsize=10, title_fontsize=11,
+              loc="upper left", bbox_to_anchor=(1.02, 1.0))
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_objective_components_diff(df_base: pd.DataFrame, df_scen: pd.DataFrame, *, base_name: str, scen_name: str):
+    """
+    Plots diff by period (stacked) but prints levels as "(scen) - (base)".
+    """
+    df_base = df_base.reindex(PERIODS_ORDER).fillna(0)
+    df_scen = df_scen.reindex(PERIODS_ORDER).fillna(0)
+    df_diff = df_scen - df_base
+
+    # Print: period totals and component totals as expression
+    _print_series_expr(
+        "Objective cost per period (sum over components) [bn EUR]",
+        df_scen.sum(axis=1), df_base.sum(axis=1),
+        unit=" bn EUR", decimals=3,
+        scen_name=scen_name, base_name=base_name
+    )
+    _print_top_expr(
+        "Objective component totals (sum over periods) [bn EUR]",
+        df_scen.sum(axis=0), df_base.sum(axis=0),
+        n=50, unit=" bn EUR", decimals=3,
+        scen_name=scen_name, base_name=base_name
+    )
+
+    # Plot diff
+    fig, ax = plt.subplots(figsize=(12, 7))
+    x = np.arange(len(PERIODS_ORDER))
+    bottom_pos = np.zeros(len(PERIODS_ORDER))
+    bottom_neg = np.zeros(len(PERIODS_ORDER))
+
+    for col, color in zip(df_diff.columns, OBJ_COLORS_11):
+        vals = df_diff[col].values
+        pos = np.where(vals > 0, vals, 0.0)
+        neg = np.where(vals < 0, vals, 0.0)
+        ax.bar(x, pos, bottom=bottom_pos, color=color, label=col)
+        bottom_pos += pos
+        ax.bar(x, neg, bottom=bottom_neg, color=color)
+        bottom_neg += neg
+
+    ax.axhline(0, color="black", linewidth=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels(PERIODS_ORDER, rotation=30, ha="right")
+    ax.set_xlabel("Period")
+    ax.set_ylabel("Cost difference [bn EUR] (SCEN - BASE)")
+    ax.legend(loc="upper left", fontsize=10, bbox_to_anchor=(1.02, 1.0))
+    ax.grid(axis="y")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_total_objective_difference(
+    df_base: pd.DataFrame,
+    obj_base_bn: float,
+    df_scen: pd.DataFrame,
+    obj_scen_bn: float,
+    *,
+    base_name: str,
+    scen_name: str,
+):
+    """
+    Prints component levels as "(scen) - (base)" incl. Other, and plots diff stacked bar.
+    """
+    # Diff decomposition
+    df_diff = df_scen - df_base
+    comp_diff = df_diff.sum(axis=0)  # bn EUR
+    obj_total_diff = obj_scen_bn - obj_base_bn
+    other_diff = obj_total_diff - comp_diff.sum()
+
+    # Levels per scenario including Other
+    base_comp = df_base.sum(axis=0)
+    scen_comp = df_scen.sum(axis=0)
+    base_other = obj_base_bn - base_comp.sum()
+    scen_other = obj_scen_bn - scen_comp.sum()
+
+    base_with_other = base_comp.copy()
+    scen_with_other = scen_comp.copy()
+    base_with_other["Other"] = base_other
+    scen_with_other["Other"] = scen_other
+
+    print("\n" + "-" * 80)
+    print("Objective totals (bn EUR)")
+    print(f"  {scen_name}: {obj_scen_bn:.3f}")
+    print(f"  {base_name}: {obj_base_bn:.3f}")
+    print(f"  Diff (SCEN - BASE): {obj_total_diff:.3f}")
+    print(f"  Implied Other diff: {other_diff:.3f}")
+
+    _print_top_expr(
+        "Component levels incl. Other (sum over periods) [bn EUR]",
+        scen_with_other, base_with_other,
+        n=50, unit=" bn EUR", decimals=3,
+        scen_name=scen_name, base_name=base_name
+    )
+
+    # Plot diff
+    comp_diff_plot = comp_diff.copy()
+    comp_diff_plot["Other"] = other_diff
+
+    components = comp_diff_plot.index.tolist()
+    values = comp_diff_plot.values
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    x = 0.0
+    bar_width = 0.5
+    bottom_pos, bottom_neg = 0.0, 0.0
+
+    for name, val, col in zip(components, values, OBJ_COLORS_12):
+        if np.isclose(val, 0.0):
+            continue
+        bottom = bottom_pos if val > 0 else bottom_neg
+        ax.bar(x, val, width=bar_width, bottom=bottom, color=col,
+               edgecolor="black", linewidth=0.5, label=name)
+        if val > 0:
+            bottom_pos += val
+        else:
+            bottom_neg += val
+
+    ax.set_xlim(-1, 1)
+    ax.set_xticks([x])
+    ax.axhline(0, color="black", linewidth=1)
+    ax.grid(axis="y", linestyle="--")
+    ax.set_axisbelow(True)
+    ax.set_ylabel("Objective diff [bn EUR] (SCEN - BASE)", fontsize=14)
+
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    ax.legend(by_label.values(), by_label.keys(),
+              title="Components", fontsize=10, title_fontsize=11,
+              loc="upper left", bbox_to_anchor=(1.02, 1.0))
+
+    plt.tight_layout()
+    plt.show()
+
+    return comp_diff_plot
+
+
+# =============================================================================
+# ELECTRICITY: production (annual per period) + totals by tech/country
+# =============================================================================
+def compute_annual_production_gwh(df: pd.DataFrame):
+    """
+    Returns:
+      prod_gwh: index=GeneratorType, columns=Period, values=GWh per year
+      periods: sorted periods
+    """
     work = df.copy()
     work["genExpectedAnnualProduction_GWh"] = pd.to_numeric(
         work["genExpectedAnnualProduction_GWh"], errors="coerce"
-    )
+    ).fillna(0)
 
     prod = work.pivot_table(
         index="GeneratorType",
@@ -370,23 +516,38 @@ def compute_production(df):
     return prod[periods], periods
 
 
-def plot_production_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN"):
-    prod_base, periods = compute_production(df_base)
-    prod_scen, _ = compute_production(df_scen)
+def plot_annual_production_diff(df_base: pd.DataFrame, df_scen: pd.DataFrame, *, base_name: str, scen_name: str):
+    """
+    Annual production per period (TWh/year):
+      - prints totals per period and totals per tech as "(scen) - (base)"
+      - plots diff stacked by tech per period
+    """
+    prod_base_gwh, periods = compute_annual_production_gwh(df_base)
+    prod_scen_gwh, _ = compute_annual_production_gwh(df_scen)
 
-    all_techs = sorted(set(prod_base.index) | set(prod_scen.index))
-    prod_base = prod_base.reindex(all_techs).fillna(0)
-    prod_scen = prod_scen.reindex(all_techs).fillna(0)
+    all_techs = sorted(set(prod_base_gwh.index) | set(prod_scen_gwh.index))
+    prod_base_gwh = prod_base_gwh.reindex(all_techs).fillna(0)
+    prod_scen_gwh = prod_scen_gwh.reindex(all_techs).fillna(0)
 
-    prod_diff_TWh = (prod_scen - prod_base) / 1e3  # TWh (annual)
+    base_twh = prod_base_gwh / 1e3
+    scen_twh = prod_scen_gwh / 1e3
+    diff_twh = (prod_scen_gwh - prod_base_gwh) / 1e3
 
-    # ---- Print tall for rapport ----
-    print("\n==============================")
-    print(f"Årlig produksjonsdiff per periode: {name_scen} – {name_base} (TWh/år)")
-    _print_series("Total diff per periode (sum over tech)", prod_diff_TWh.sum(axis=0), unit=" TWh/år", decimals=2)
-    _print_top("Total diff per tech (sum over perioder)", prod_diff_TWh.sum(axis=1), n=20, unit=" TWh/år", decimals=2)
+    # Prints (levels as expressions)
+    _print_series_expr(
+        "Electricity: annual production totals per period (sum over tech) [TWh/year]",
+        scen_twh.sum(axis=0), base_twh.sum(axis=0),
+        unit=" TWh/yr", decimals=2,
+        scen_name=scen_name, base_name=base_name
+    )
+    _print_top_expr(
+        "Electricity: annual production totals per technology (sum over periods) [TWh/year]",
+        scen_twh.sum(axis=1), base_twh.sum(axis=1),
+        n=20, unit=" TWh/yr", decimals=2,
+        scen_name=scen_name, base_name=base_name
+    )
 
-    # ---- Plot ----
+    # Plot diff
     x = np.arange(len(periods))
     fig, ax = plt.subplots(figsize=(16, 10))
 
@@ -394,7 +555,7 @@ def plot_production_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN"):
     bottom_neg = np.zeros(len(periods))
 
     for tech in all_techs:
-        vals = prod_diff_TWh.loc[tech].values
+        vals = diff_twh.loc[tech].values
         pos = np.where(vals > 0, vals, 0.0)
         neg = np.where(vals < 0, vals, 0.0)
         color = tech_colors.get(tech, "lightgray")
@@ -406,29 +567,30 @@ def plot_production_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN"):
 
     ax.axhline(0, color="black")
     ax.set_xticks(x)
-    ax.set_ylim([-900, 900])
-    plt.yticks(fontsize=18)
-    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=18)
-    ax.set_ylabel("Annual production [TWh]", fontsize=20)
+    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=14)
+    ax.set_ylabel("Annual production diff [TWh/year] (SCEN - BASE)", fontsize=14)
+    ax.grid(axis="y")
 
     handles = [plt.Rectangle((0, 0), 1, 1, color=tech_colors.get(t, "lightgray")) for t in all_techs]
-    ax.legend(handles, all_techs, title="Technology", fontsize=15, title_fontsize=15, ncol=2,
+    ax.legend(handles, all_techs, title="Technology", fontsize=10, title_fontsize=11, ncol=2,
               bbox_to_anchor=(1.02, 1), loc="upper left")
 
     plt.tight_layout()
-    plt.grid(axis="y")
     plt.show()
 
-    return prod_diff_TWh
+    return diff_twh
 
 
-def compute_production_by_country(df, country_col="Node"):
+def compute_total_production_by_country_gwh(df: pd.DataFrame, *, country_col: str = "Node") -> pd.DataFrame:
+    """
+    Total (summed across periods) by country & technology:
+      returns DataFrame tech x country in GWh (sum over all rows)
+    """
     work = df.copy()
     work["genExpectedAnnualProduction_GWh"] = pd.to_numeric(
         work["genExpectedAnnualProduction_GWh"], errors="coerce"
     ).fillna(0)
 
-    # tech x land (GWh)
     return (
         work.groupby([country_col, "GeneratorType"])["genExpectedAnnualProduction_GWh"]
         .sum()
@@ -437,17 +599,26 @@ def compute_production_by_country(df, country_col="Node"):
     )
 
 
-def plot_production_diff_total_by_country(
-    df_base, df_scen,
-    country_col="Node",
-    name_base="BASE", name_scen="SCEN",
-    top_n=None,
-    sort_by_abs_total=True,
+def plot_total_production_diff_by_country(
+    df_base: pd.DataFrame,
+    df_scen: pd.DataFrame,
+    *,
+    base_name: str,
+    scen_name: str,
+    country_col: str = "Node",
+    top_n: int | None = 23,
+    sort_by_abs_total: bool = True,
     figsize=(16, 8),
-    ylim=None
+    ylim=None,
 ):
-    prod_base = compute_production_by_country(df_base, country_col=country_col)
-    prod_scen = compute_production_by_country(df_scen, country_col=country_col)
+    """
+    Total production across all periods (TWh):
+      - per country totals (sum over tech), printed as "(scen) - (base)"
+      - per tech totals (sum over selected countries), printed as "(scen) - (base)"
+      - plots diff stacked by tech per country
+    """
+    prod_base = compute_total_production_by_country_gwh(df_base, country_col=country_col)
+    prod_scen = compute_total_production_by_country_gwh(df_scen, country_col=country_col)
 
     all_techs = sorted(set(prod_base.index) | set(prod_scen.index))
     all_ctry = sorted(set(prod_base.columns) | set(prod_scen.columns))
@@ -455,23 +626,35 @@ def plot_production_diff_total_by_country(
     prod_base = prod_base.reindex(index=all_techs, columns=all_ctry).fillna(0)
     prod_scen = prod_scen.reindex(index=all_techs, columns=all_ctry).fillna(0)
 
-    diff_TWh = (prod_scen - prod_base) / 1e3  # tech x land (TWh)
+    base_twh = prod_base / 1e3
+    scen_twh = prod_scen / 1e3
+    diff_twh = (prod_scen - prod_base) / 1e3
 
-    total_by_country = diff_TWh.sum(axis=0)
+    total_by_country = diff_twh.sum(axis=0)
     order = (total_by_country.abs() if sort_by_abs_total else total_by_country).sort_values(ascending=False).index
     if top_n is not None:
         order = order[:top_n]
 
-    diff_TWh = diff_TWh[order]
-    countries = list(diff_TWh.columns)
+    diff_twh = diff_twh[order]
+    base_sel = base_twh[order]
+    scen_sel = scen_twh[order]
+    countries = list(diff_twh.columns)
 
-    # ---- Print tall for rapport ----
-    print("\n==============================")
-    print(f"Total produksjonsdiff per land: {name_scen} – {name_base} (TWh, sum over tech og perioder)")
-    _print_series("Total diff per land (TWh)", diff_TWh.sum(axis=0), unit=" TWh", decimals=2)
-    _print_top("Tech med størst total påvirkning (sum over land i utvalget)", diff_TWh.sum(axis=1), n=20, unit=" TWh", decimals=2)
+    # Prints (levels as expressions, consistent with selected order)
+    _print_series_expr(
+        "Electricity: TOTAL production per country (sum over tech & periods) [TWh]",
+        scen_sel.sum(axis=0), base_sel.sum(axis=0),
+        unit=" TWh", decimals=2,
+        scen_name=scen_name, base_name=base_name
+    )
+    _print_top_expr(
+        "Electricity: tech with largest TOTAL impact (sum over selected countries) [TWh]",
+        scen_sel.sum(axis=1), base_sel.sum(axis=1),
+        n=20, unit=" TWh", decimals=2,
+        scen_name=scen_name, base_name=base_name
+    )
 
-    # ---- Plot ----
+    # Plot
     x = np.arange(len(countries))
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -480,7 +663,7 @@ def plot_production_diff_total_by_country(
     seen_labels = set()
 
     for tech in all_techs:
-        vals = diff_TWh.loc[tech].values
+        vals = diff_twh.loc[tech].values
         if np.all(np.abs(vals) < 1e-12):
             continue
 
@@ -501,8 +684,8 @@ def plot_production_diff_total_by_country(
 
     ax.axhline(0, color="black", linewidth=1.0)
     ax.set_xticks(x)
-    ax.set_xticklabels(countries, rotation=90, ha="center", fontsize=16)
-    ax.set_ylabel("Total production difference [TWh]", fontsize=16)
+    ax.set_xticklabels(countries, rotation=90, ha="center", fontsize=12)
+    ax.set_ylabel("TOTAL production diff [TWh] (SCEN - BASE)", fontsize=12)
 
     if ylim is not None:
         ax.set_ylim(ylim)
@@ -513,51 +696,80 @@ def plot_production_diff_total_by_country(
 
     ax.grid(axis="y")
     ax.legend(title="Technology", bbox_to_anchor=(1.02, 1), loc="upper left",
-              title_fontsize=16, fontsize=14)
+              title_fontsize=12, fontsize=10)
     plt.tight_layout()
     plt.show()
 
-    return diff_TWh
+    return diff_twh
 
 
-def plot_production_total_diff(
-    df_base, df_scen, df_base3, df_scen3,
-    name_base="BASE", name_scen="SCEN",
-    name_base3="BASE3", name_scen3="SCEN3",
-    label1=None, label2=None,
-    width=0.35
+def plot_total_production_two_comparisons(
+    df_base1: pd.DataFrame,
+    df_scen1: pd.DataFrame,
+    df_base2: pd.DataFrame,
+    df_scen2: pd.DataFrame,
+    *,
+    base1_name: str,
+    scen1_name: str,
+    base2_name: str,
+    scen2_name: str,
+    label1: str,
+    label2: str,
+    width: float = 0.35,
 ):
-    prod_base, _ = compute_production(df_base)
-    prod_scen, _ = compute_production(df_scen)
-    prod_base3, _ = compute_production(df_base3)
-    prod_scen3, _ = compute_production(df_scen3)
+    """
+    Two separate scenario comparisons, printed as expressions and plotted as two stacked bars.
 
-    all_techs = sorted(set(prod_base.index) | set(prod_scen.index) | set(prod_base3.index) | set(prod_scen3.index))
+    IMPORTANT:
+    This uses your original scaling: *5 (apparently years per investment period) and then sums over periods,
+    so the output is "TWh across all periods" (i.e. not annual).
+    """
+    prod_base1, _ = compute_annual_production_gwh(df_base1)
+    prod_scen1, _ = compute_annual_production_gwh(df_scen1)
+    prod_base2, _ = compute_annual_production_gwh(df_base2)
+    prod_scen2, _ = compute_annual_production_gwh(df_scen2)
 
-    prod_base = prod_base.reindex(all_techs).fillna(0)
-    prod_scen = prod_scen.reindex(all_techs).fillna(0)
-    prod_base3 = prod_base3.reindex(all_techs).fillna(0)
-    prod_scen3 = prod_scen3.reindex(all_techs).fillna(0)
+    all_techs = sorted(set(prod_base1.index) | set(prod_scen1.index) | set(prod_base2.index) | set(prod_scen2.index))
 
-    diff1_TWh = (prod_scen - prod_base) * 5 / 1e3
-    diff2_TWh = (prod_scen3 - prod_base3) * 5 / 1e3
+    prod_base1 = prod_base1.reindex(all_techs).fillna(0)
+    prod_scen1 = prod_scen1.reindex(all_techs).fillna(0)
+    prod_base2 = prod_base2.reindex(all_techs).fillna(0)
+    prod_scen2 = prod_scen2.reindex(all_techs).fillna(0)
 
-    total_diff1 = diff1_TWh.sum(axis=1)
-    total_diff2 = diff2_TWh.sum(axis=1)
+    # Your original choice: convert annual GWh to "period-total" by multiplying 5,
+    # then convert to TWh by /1e3 and sum across periods.
+    base1_total_twh = (prod_base1 * 5 / 1e3).sum(axis=1)
+    scen1_total_twh = (prod_scen1 * 5 / 1e3).sum(axis=1)
+    base2_total_twh = (prod_base2 * 5 / 1e3).sum(axis=1)
+    scen2_total_twh = (prod_scen2 * 5 / 1e3).sum(axis=1)
 
-    eps = 1e-8
-    techs_with_diff = [t for t in all_techs if abs(float(total_diff1.loc[t])) > eps or abs(float(total_diff2.loc[t])) > eps]
+    # Print (levels as expressions)
+    print("\n" + "=" * 80)
+    print("Electricity: TOTAL production by technology across ALL periods [TWh] (two comparisons)")
+    print(f"Bar 1 label: {label1}   -> comparison: {scen1_name} (SCEN) vs {base1_name} (BASE)")
+    print(f"Bar 2 label: {label2}   -> comparison: {scen2_name} (SCEN) vs {base2_name} (BASE)")
+    print("=" * 80)
 
-    label1 = label1 or "Moderate nuclear capex"
-    label2 = label2 or "Optimistic nuclear capex"
+    _print_top_expr(
+        f"{label1}: total production by tech across all periods [TWh]",
+        scen1_total_twh, base1_total_twh,
+        n=25, unit=" TWh", decimals=2,
+        scen_name=scen1_name, base_name=base1_name
+    )
+    _print_top_expr(
+        f"{label2}: total production by tech across all periods [TWh]",
+        scen2_total_twh, base2_total_twh,
+        n=25, unit=" TWh", decimals=2,
+        scen_name=scen2_name, base_name=base2_name
+    )
 
-    # ---- Print tall for rapport ----
-    print("\n==============================")
-    print("Total produksjonsdiff per teknologi (TWh, sum over alle perioder)")
-    _print_top(f"{label1}: tech total", total_diff1, n=25, unit=" TWh", decimals=2)
-    _print_top(f"{label2}: tech total", total_diff2, n=25, unit=" TWh", decimals=2)
+    # Plot uses DIFF (SCEN - BASE) for each comparison as your original did
+    diff1 = scen1_total_twh - base1_total_twh
+    diff2 = scen2_total_twh - base2_total_twh
 
-    # ---- Plot ----
+    eps = 1e-12
+    techs_with_diff = [t for t in all_techs if abs(float(diff1.loc[t])) > eps or abs(float(diff2.loc[t])) > eps]
+
     fig, ax = plt.subplots(figsize=(10, 7))
     x = np.array([0, 1])
     bottom_pos = np.zeros(2)
@@ -565,7 +777,7 @@ def plot_production_total_diff(
     seen_labels = set()
 
     for tech in techs_with_diff:
-        vals = np.array([float(total_diff1.loc[tech]), float(total_diff2.loc[tech])])
+        vals = np.array([float(diff1.loc[tech]), float(diff2.loc[tech])])
         color = tech_colors.get(tech, "lightgray")
 
         for i, v in enumerate(vals):
@@ -583,32 +795,31 @@ def plot_production_total_diff(
 
     ax.axhline(0, color="black")
     ax.set_xticks(x)
-    plt.yticks(fontsize=16)
-    ax.set_xticklabels([label1, label2], fontsize=14)
-    ax.set_ylabel("Total production difference [TWh]", fontsize=20)
-
-    y_min = min(0, bottom_neg.min()) * 1.1
-    y_max = max(0, bottom_pos.max()) * 1.1
-    ax.set_ylim([y_min if y_min != 0 else -1, y_max if y_max != 0 else 1])
-    ax.set_xlim(-0.6, 1.6)
+    ax.set_xticklabels([label1, label2], fontsize=12)
+    ax.set_ylabel("TOTAL production diff [TWh] (SCEN - BASE)", fontsize=12)
+    ax.grid(axis="y")
 
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles, labels, title="Technology", fontsize=13, title_fontsize=14,
+    ax.legend(handles, labels, title="Technology", fontsize=9, title_fontsize=10,
               bbox_to_anchor=(1.02, 1), loc="upper left")
 
-    plt.grid(axis="y")
     plt.tight_layout()
     plt.show()
 
-    return pd.DataFrame({"diff_1_TWh": total_diff1, "diff_2_TWh": total_diff2}, index=all_techs)
+    return pd.DataFrame({"diff_1_TWh": diff1, "diff_2_TWh": diff2}, index=all_techs)
 
 
-# -----------------------------
-# Installed capacity
-# -----------------------------
-def compute_installedCap(df):
+# =============================================================================
+# ELECTRICITY: installed capacity
+# =============================================================================
+def compute_installed_capacity_mw(df: pd.DataFrame):
+    """
+    Returns:
+      cap_mw: index=GeneratorType, columns=Period, values=MW installed
+      periods: sorted periods
+    """
     work = df.copy()
-    work["genInstalledCap_MW"] = pd.to_numeric(work["genInstalledCap_MW"], errors="coerce")
+    work["genInstalledCap_MW"] = pd.to_numeric(work["genInstalledCap_MW"], errors="coerce").fillna(0)
 
     cap = work.pivot_table(
         index="GeneratorType",
@@ -626,34 +837,49 @@ def compute_installedCap(df):
     return cap[periods], periods
 
 
-def plot_installedcap_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN"):
-    cap_base, periods = compute_installedCap(df_base)
-    cap_scen, _ = compute_installedCap(df_scen)
+def plot_installed_capacity_diff(df_base: pd.DataFrame, df_scen: pd.DataFrame, *, base_name: str, scen_name: str):
+    """
+    Installed capacity (GW) per period:
+      - prints totals per period and totals per tech as "(scen) - (base)"
+      - plots diff stacked by tech per period
+    """
+    cap_base_mw, periods = compute_installed_capacity_mw(df_base)
+    cap_scen_mw, _ = compute_installed_capacity_mw(df_scen)
 
-    all_techs = sorted(set(cap_base.index) | set(cap_scen.index))
-    cap_base = cap_base.reindex(all_techs).fillna(0)
-    cap_scen = cap_scen.reindex(all_techs).fillna(0)
+    all_techs = sorted(set(cap_base_mw.index) | set(cap_scen_mw.index))
+    cap_base_mw = cap_base_mw.reindex(all_techs).fillna(0)
+    cap_scen_mw = cap_scen_mw.reindex(all_techs).fillna(0)
 
-    cap_diff_GW = (cap_scen - cap_base) / 1e3  # MW -> GW
+    base_gw = cap_base_mw / 1e3
+    scen_gw = cap_scen_mw / 1e3
+    diff_gw = (cap_scen_mw - cap_base_mw) / 1e3
 
-    # ---- Print tall for rapport ----
-    print("\n==============================")
-    print(f"Installert kapasitet diff: {name_scen} – {name_base} (GW)")
-    _print_series("Total diff per periode (sum over tech)", cap_diff_GW.sum(axis=0), unit=" GW", decimals=2)
-    _print_top("Total diff per tech (sum over perioder)", cap_diff_GW.sum(axis=1), n=25, unit=" GW", decimals=2)
+    # Prints
+    _print_series_expr(
+        "Electricity: installed capacity totals per period (sum over tech) [GW]",
+        scen_gw.sum(axis=0), base_gw.sum(axis=0),
+        unit=" GW", decimals=2,
+        scen_name=scen_name, base_name=base_name
+    )
+    _print_top_expr(
+        "Electricity: installed capacity totals per technology (sum over periods) [GW]",
+        scen_gw.sum(axis=1), base_gw.sum(axis=1),
+        n=25, unit=" GW", decimals=2,
+        scen_name=scen_name, base_name=base_name
+    )
 
-    # ---- Plot (som før) ----
+    # Plot diff
     x = np.arange(len(periods))
-    fig, ax = plt.subplots(figsize=(16, 12))
+    fig, ax = plt.subplots(figsize=(16, 10))
 
     bottom_pos = np.zeros(len(periods))
     bottom_neg = np.zeros(len(periods))
 
     tol = 1e-12
-    techs_with_diff = [t for t in all_techs if np.any(np.abs(cap_diff_GW.loc[t].values) > tol)]
+    techs_with_diff = [t for t in all_techs if np.any(np.abs(diff_gw.loc[t].values) > tol)]
 
     for tech in techs_with_diff:
-        vals = cap_diff_GW.loc[tech].values
+        vals = diff_gw.loc[tech].values
         pos = np.where(vals > 0, vals, 0.0)
         neg = np.where(vals < 0, vals, 0.0)
         color = tech_colors.get(tech, "lightgray")
@@ -665,10 +891,9 @@ def plot_installedcap_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN")
 
     ax.axhline(0, color="black")
     ax.set_xticks(x)
-    ax.set_ylim([-600, 600])
-    plt.yticks(fontsize=24)
-    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=26)
-    ax.set_ylabel("Installed capacity [GW]", fontsize=26)
+    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=12)
+    ax.set_ylabel("Installed capacity diff [GW] (SCEN - BASE)", fontsize=12)
+    ax.grid(axis="y")
 
     handles, labels = ax.get_legend_handles_labels()
     seen = set()
@@ -678,29 +903,38 @@ def plot_installedcap_diff(df_base, df_scen, name_base="BASE", name_scen="SCEN")
             uniq_h.append(h)
             uniq_l.append(l)
             seen.add(l)
-
     ax.legend(uniq_h, uniq_l, title="Technology",
-              fontsize=18, title_fontsize=20,
-              ncol=1, bbox_to_anchor=(1.02, 1), loc="upper left")
+              fontsize=9, title_fontsize=10,
+              bbox_to_anchor=(1.02, 1), loc="upper left")
 
-    plt.grid(axis="y")
     plt.tight_layout()
     plt.show()
 
-    return cap_diff_GW
+    return diff_gw
 
 
-# -----------------------------
-# Hydrogen production (per tech) diff
-# -----------------------------
-def Yearly_hydrogenProd_perTech_diff(
-    df_base, df_scen,
-    x1, x2, x3, x4, x5, x6,
-    n_scen, n_hours,
-    name_base="FLEX", name_scen="NOFLEX",
-    y_lim=None, savefigure=False, results_dir=None, figurename=None
+# =============================================================================
+# HYDROGEN: annual production by tech (Mton/year) + storage capacity (Mton)
+# =============================================================================
+def plot_h2_annual_production_by_tech_diff(
+    df_base: pd.DataFrame,
+    df_scen: pd.DataFrame,
+    *,
+    base_name: str,
+    scen_name: str,
+    n_scen: int,
+    n_hours: int,
+    cols: tuple[str, str, str, str, str, str],
+    y_lim=None,
 ):
-    seasonScale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
+    """
+    Prints annual H2 production levels as "(scen) - (base)" in Mton/year:
+      - totals per period (sum over tech)
+      - totals per tech (sum over periods)
+    Plots DIFF stacked bar by tech per period (Mton/year).
+    """
+    x1, x2, x3, x4, x5, x6 = cols
+    season_scale = (8760 - 2 * n_hours) / (4 * 7 * n_hours)
 
     def _prep(df):
         agg = (
@@ -710,22 +944,28 @@ def Yearly_hydrogenProd_perTech_diff(
         )
         agg["Period"] = pd.Categorical(agg["Period"], categories=PERIODS_ORDER, ordered=True)
         agg = agg.sort_values("Period").set_index("Period")
-
-        agg[[x1, x2, x3, x4, x5, x6]] = agg[[x1, x2, x3, x4, x5, x6]] * seasonScale / n_scen
+        agg[[x1, x2, x3, x4, x5, x6]] = agg[[x1, x2, x3, x4, x5, x6]] * season_scale / n_scen
         return agg.reindex(PERIODS_ORDER).fillna(0)
 
-    agg_base = _prep(df_base)
-    agg_scen = _prep(df_scen)
-    diff = agg_scen - agg_base
+    base = _prep(df_base)
+    scen = _prep(df_scen)
+    diff = scen - base
 
-    # ---- Print tall for rapport (Mton/år per periode + totaler) ----
-    diff_Mton = diff / 1e6
-    print("\n==============================")
-    print(f"Årlig H2-produksjonsdiff per periode: {name_scen} – {name_base} (Mton/år)")
-    _print_series("Total diff per periode (sum over tech)", diff_Mton.sum(axis=1), unit=" Mton/år", decimals=3)
-    _print_top("Total diff per tech (sum over perioder)", diff_Mton.sum(axis=0), n=20, unit=" Mton/år", decimals=3)
+    # Prints (levels)
+    _print_series_expr(
+        "Hydrogen: annual production totals per period (sum over tech) [Mton/year]",
+        scen.sum(axis=1) / 1e6, base.sum(axis=1) / 1e6,
+        unit=" Mton/yr", decimals=3,
+        scen_name=scen_name, base_name=base_name
+    )
+    _print_top_expr(
+        "Hydrogen: annual production totals per technology (sum over periods) [Mton/year]",
+        scen.sum(axis=0) / 1e6, base.sum(axis=0) / 1e6,
+        n=20, unit=" Mton/yr", decimals=3,
+        scen_name=scen_name, base_name=base_name
+    )
 
-    # ---- Plot (som før) ----
+    # Plot diff (Mton)
     fig, ax = plt.subplots(figsize=(12, 8))
     pos_x = np.arange(len(PERIODS_ORDER)) * 0.5
     width = 0.3
@@ -738,7 +978,7 @@ def Yearly_hydrogenProd_perTech_diff(
     bottom_neg = np.zeros(len(PERIODS_ORDER))
 
     for col, lab, color in zip(tech_cols, labels, colors):
-        vals = diff[col].values / 1e6  # Mton
+        vals = diff[col].values / 1e6  # Mton/year
         pos = np.where(vals > 0, vals, 0.0)
         neg = np.where(vals < 0, vals, 0.0)
 
@@ -752,24 +992,14 @@ def Yearly_hydrogenProd_perTech_diff(
 
     ax.axhline(0, color="black", linewidth=1)
     ax.set_xticks(pos_x)
-    ax.set_ylim([-20, 20])
     ax.set_xticklabels(PERIODS_ORDER, rotation=0)
-    ax.tick_params(axis="x", labelsize=16)
-    ax.tick_params(axis="y", labelsize=16)
-
-    ax.set_xlabel("Investment period", fontsize=18)
-    ax.set_ylabel(f"Δ annual hydrogen production [M ton]", fontsize=18)
+    ax.set_xlabel("Investment period", fontsize=12)
+    ax.set_ylabel("Annual H2 production diff [Mton/year] (SCEN - BASE)", fontsize=12)
     ax.grid(axis="y", linestyle="--", alpha=0.5)
-    ax.legend(loc="upper left", fontsize=16, title="Technology", title_fontsize=18)
+    ax.legend(loc="upper left", fontsize=10, title="Technology", title_fontsize=11)
 
     if y_lim is not None:
         ax.set_ylim(y_lim)
-
-    if savefigure and figurename and results_dir:
-        Path(results_dir).mkdir(parents=True, exist_ok=True)
-        figpath = Path(results_dir) / f"{figurename}_AnnH2prod_DIFF.png"
-        plt.savefig(figpath, dpi=300, bbox_inches="tight")
-        print(f"Figure saved to {figpath}")
 
     plt.tight_layout()
     plt.show()
@@ -777,19 +1007,20 @@ def Yearly_hydrogenProd_perTech_diff(
     return diff
 
 
-# -----------------------------
-# Hydrogen storage capacity diff
-# -----------------------------
-def hydrogen_storage_capacity_diff(
-    df_base,
-    df_scen,
-    name_base="FLEX",
-    name_scen="NOFLEX",
+def plot_h2_storage_capacity_diff(
+    df_base: pd.DataFrame,
+    df_scen: pd.DataFrame,
+    *,
+    base_name: str,
+    scen_name: str,
     periods=None,
-    savefigure=False,
-    results_dir=None,
-    figurename=None
 ):
+    """
+    Prints H2 storage capacity levels as "(scen) - (base)" in Mton:
+      - totals per period (sum over storage types)
+      - totals per storage type (sum over periods)
+    Plots DIFF stacked bar by storage type per period (Mton).
+    """
     if periods is None:
         periods = PERIODS_ORDER
 
@@ -804,21 +1035,28 @@ def hydrogen_storage_capacity_diff(
     def _prep(df):
         work = df.copy()
         for c in cols:
-            work[c] = pd.to_numeric(work[c], errors="coerce")
+            work[c] = pd.to_numeric(work[c], errors="coerce").fillna(0)
         return work.groupby("Period")[cols].sum().reindex(periods).fillna(0)
 
-    cap_base = _prep(df_base)
-    cap_scen = _prep(df_scen)
+    base = _prep(df_base)
+    scen = _prep(df_scen)
+    diff_mton = (scen - base) / 1e6
 
-    diff_Mton = (cap_scen - cap_base) / 1e6
+    # Prints (levels)
+    _print_series_expr(
+        "Hydrogen: storage capacity totals per period (sum over storage types) [Mton]",
+        scen.sum(axis=1) / 1e6, base.sum(axis=1) / 1e6,
+        unit=" Mton", decimals=3,
+        scen_name=scen_name, base_name=base_name
+    )
+    _print_top_expr(
+        "Hydrogen: storage capacity totals per storage type (sum over periods) [Mton]",
+        scen.sum(axis=0) / 1e6, base.sum(axis=0) / 1e6,
+        n=10, unit=" Mton", decimals=3,
+        scen_name=scen_name, base_name=base_name
+    )
 
-    # ---- Print tall for rapport ----
-    print("\n==============================")
-    print(f"H2-lagringskapasitet diff: {name_scen} – {name_base} (Mton)")
-    _print_series("Total diff per periode (sum over lagringstyper)", diff_Mton.sum(axis=1), unit=" Mton", decimals=3)
-    _print_top("Total diff per lagringstype (sum over perioder)", diff_Mton.sum(axis=0), n=10, unit=" Mton", decimals=3)
-
-    # ---- Plot ----
+    # Plot diff
     x = np.arange(len(periods))
     fig, ax = plt.subplots(figsize=(12, 7))
 
@@ -826,118 +1064,145 @@ def hydrogen_storage_capacity_diff(
     bottom_neg = np.zeros(len(periods))
 
     for c, lab, col in zip(cols, labels, colors):
-        vals = diff_Mton[c].values
+        vals = diff_mton[c].values
         pos = np.where(vals > 0, vals, 0.0)
         neg = np.where(vals < 0, vals, 0.0)
 
         ax.bar(x, pos, bottom=bottom_pos, color=col, edgecolor="black", linewidth=0.4, label=lab)
         bottom_pos += pos
-
         ax.bar(x, neg, bottom=bottom_neg, color=col, edgecolor="black", linewidth=0.4)
         bottom_neg += neg
 
     ax.axhline(0, color="black", linewidth=1)
     ax.set_xticks(x)
-    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=12)
-    ax.set_ylabel(f"Hydrogen storage capacity difference  [Mton]", fontsize=14)
-    ax.set_xlabel("Period", fontsize=14)
-
-    ax.tick_params(axis="y", labelsize=12)
+    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=11)
+    ax.set_ylabel("H2 storage capacity diff [Mton] (SCEN - BASE)", fontsize=12)
+    ax.set_xlabel("Period", fontsize=12)
     ax.grid(axis="y", linestyle="--", alpha=0.5)
-    ax.legend(title="Storage type", fontsize=11, title_fontsize=12)
+    ax.legend(title="Storage type", fontsize=10, title_fontsize=11)
 
     plt.tight_layout()
-
-    if savefigure and figurename and results_dir:
-        Path(results_dir).mkdir(parents=True, exist_ok=True)
-        outpath = Path(results_dir) / f"{figurename}_H2storageCapDiff.png"
-        plt.savefig(outpath, dpi=300, bbox_inches="tight")
-        print(f"Figure saved to {outpath}")
-
     plt.show()
-    return diff_Mton
+
+    return diff_mton
 
 
-# ============================================================
-# Kjøring (samme som hos deg)
-# ============================================================
-n_scen = 2
+# =============================================================================
+# MAIN
+# =============================================================================
+def main():
+    base_dir = SCENARIOS[BASE_NAME]
+    scen_dir = SCENARIOS[SCEN_NAME]
+    base2_dir = SCENARIOS[BASE2_NAME]
+    scen2_dir = SCENARIOS[SCEN2_NAME]
 
-Gen_op1, Gen_inv1, H2_inv1, Stor_el1, Trans_inv1, OffConv_inv1, OBJ_val1, H2_op1 = load_results(result_dir1)
-Gen_op2, Gen_inv2, H2_inv2, Stor_el2, Trans_inv2, OffConv_inv2, OBJ_val2, H2_op2 = load_results(result_dir2)
+    # -------------------------------------------------------------------------
+    # OBJECTIVE COSTS
+    # -------------------------------------------------------------------------
+    _print_block_header("OBJECTIVE: cost decomposition", base_name=BASE_NAME, base_dir=base_dir, scen_name=SCEN_NAME, scen_dir=scen_dir)
 
-df_base_obj, OBJ_base = compute_period_costs(Gen_op2, Gen_inv2, H2_inv2, Stor_el2, Trans_inv2, OffConv_inv2, OBJ_val2, H2_op2, n_scen)
-df_scen_obj, OBJ_scen = compute_period_costs(Gen_op1, Gen_inv1, H2_inv1, Stor_el1, Trans_inv1, OffConv_inv1, OBJ_val1, H2_op1, n_scen)
+    gen_op_s, gen_inv_s, h2_inv_s, stor_el_s, trans_inv_s, offconv_inv_s, obj_val_s, h2_op_s = load_objective_results(scen_dir)
+    gen_op_b, gen_inv_b, h2_inv_b, stor_el_b, trans_inv_b, offconv_inv_b, obj_val_b, h2_op_b = load_objective_results(base_dir)
 
-print("\nOBJ_scen:", OBJ_scen)
-print("OBJ_base:", OBJ_base)
+    df_scen_obj, obj_scen_bn = compute_period_costs(
+        gen_op_s, gen_inv_s, h2_inv_s, stor_el_s, trans_inv_s, offconv_inv_s, obj_val_s, h2_op_s, N_SCEN
+    )
+    df_base_obj, obj_base_bn = compute_period_costs(
+        gen_op_b, gen_inv_b, h2_inv_b, stor_el_b, trans_inv_b, offconv_inv_b, obj_val_b, h2_op_b, N_SCEN
+    )
 
-plot_OBJ_generator_inv_diff(df_base_obj, df_scen_obj, name_base="BASE_MOD_FLEX", name_scen="BASE_MOD_NOFLEX")
+    plot_objective_single_bar(df_base_obj, obj_base_bn, title=f"Objective level (single scenario): {BASE_NAME}")
+    plot_objective_single_bar(df_scen_obj, obj_scen_bn, title=f"Objective level (single scenario): {SCEN_NAME}")
 
-comp_diff = plot_total_objective_difference(
-    df_base_obj, OBJ_base,
-    df_scen_obj, OBJ_scen,
-    name_base="BASE_MOD_FLEX",
-    name_scen="BASE_MOD_NOFLEX",
-)
+    print("\n" + "-" * 80)
+    print("Objective comparison summary (bn EUR)")
+    print(f"  {SCEN_NAME}: {obj_scen_bn:.3f}")
+    print(f"  {BASE_NAME}: {obj_base_bn:.3f}")
+    print(f"  Diff (SCEN - BASE): {(obj_scen_bn - obj_base_bn):.3f}")
 
-# ---- Production/investment csvs ----
-Elec_genInv_FLEX = pd.read_csv(result_dir2 / "results_elec_generation_inv.csv")
-Elec_genInv_NOFLEX = pd.read_csv(result_dir1 / "results_elec_generation_inv.csv")
-Elec_genInv_FLEX3 = pd.read_csv(result_dir4 / "results_elec_generation_inv.csv")
-Elec_genInv_NOFLEX3 = pd.read_csv(result_dir3 / "results_elec_generation_inv.csv")
+    plot_objective_components_diff(df_base_obj, df_scen_obj, base_name=BASE_NAME, scen_name=SCEN_NAME)
+    _ = plot_total_objective_difference(
+        df_base_obj, obj_base_bn, df_scen_obj, obj_scen_bn,
+        base_name=BASE_NAME, scen_name=SCEN_NAME
+    )
 
-df_base = Elec_genInv_FLEX
-df_scen = Elec_genInv_NOFLEX
-df_base3 = Elec_genInv_FLEX3
-df_scen3 = Elec_genInv_NOFLEX3
+    # -------------------------------------------------------------------------
+    # ELECTRICITY: generation investment file (annual production + installed cap)
+    # -------------------------------------------------------------------------
+    _print_block_header("ELECTRICITY: results_elec_generation_inv.csv", base_name=BASE_NAME, base_dir=base_dir, scen_name=SCEN_NAME, scen_dir=scen_dir)
 
-prod_diff_TWh = plot_production_diff(df_base=df_base, df_scen=df_scen, name_base="FLEX", name_scen="NOFLEX")
+    elec_base = load_elec_gen_inv(base_dir)
+    elec_scen = load_elec_gen_inv(scen_dir)
 
-plot_production_diff_total_by_country(
-    df_base, df_scen,
-    country_col="Node",
-    name_base="BASE", name_scen="SCEN",
-    top_n=23,
-    sort_by_abs_total=True,
-    figsize=(16, 8),
-    ylim=None,
-)
+    # Annual production (TWh/year) per period
+    _ = plot_annual_production_diff(elec_base, elec_scen, base_name=BASE_NAME, scen_name=SCEN_NAME)
 
-res = plot_production_total_diff(df_base, df_scen, df_base3, df_scen3)
+    # Total production by country across all periods (TWh)
+    _ = plot_total_production_diff_by_country(
+        elec_base, elec_scen,
+        base_name=BASE_NAME, scen_name=SCEN_NAME,
+        country_col="Node",
+        top_n=23,
+        sort_by_abs_total=True,
+        figsize=(16, 8),
+        ylim=None,
+    )
 
-cap_diff_GW = plot_installedcap_diff(df_base=df_base, df_scen=df_scen, name_base="FLEX", name_scen="NOFLEX")
+    # Total production across all periods by tech (two comparisons)
+    _print_block_header(
+        "ELECTRICITY: total production across ALL periods (two comparisons)",
+        base_name=BASE_NAME, base_dir=base_dir, scen_name=SCEN_NAME, scen_dir=scen_dir
+    )
+    print(f"Second comparison uses: BASE2={BASE2_NAME} ({base2_dir}) vs SCEN2={SCEN2_NAME} ({scen2_dir})")
 
-hydrogen_production_FLEX = pd.read_csv(result_dir2 / "results_hydrogen_production.csv")
-hydrogen_production_NOFLEX = pd.read_csv(result_dir1 / "results_hydrogen_production.csv")
+    elec_base2 = load_elec_gen_inv(base2_dir)
+    elec_scen2 = load_elec_gen_inv(scen2_dir)
 
-diff_h2_prod = Yearly_hydrogenProd_perTech_diff(
-    df_base=hydrogen_production_FLEX,
-    df_scen=hydrogen_production_NOFLEX,
-    x1="PEM_green production [ton]",
-    x2="PEM_yellow production [ton]",
-    x3="PEM_import production [ton]",
-    x4="ALK production [ton]",
-    x5="SOEC production [ton]",
-    x6="Reformer production [ton]",
-    n_scen=2,
-    n_hours=12,
-    name_base="FLEX",
-    name_scen="NOFLEX",
-)
+    _ = plot_total_production_two_comparisons(
+        df_base1=elec_base, df_scen1=elec_scen,
+        df_base2=elec_base2, df_scen2=elec_scen2,
+        base1_name=BASE_NAME, scen1_name=SCEN_NAME,
+        base2_name=BASE2_NAME, scen2_name=SCEN2_NAME,
+        label1=LABEL1, label2=LABEL2,
+    )
 
-df_store_flex = pd.read_csv(result_dir2 / "results_hydrogen_storage_inv.csv")
-df_store_noflex = pd.read_csv(result_dir1 / "results_hydrogen_storage_inv.csv")
+    # Installed capacity (GW) per period
+    _ = plot_installed_capacity_diff(elec_base, elec_scen, base_name=BASE_NAME, scen_name=SCEN_NAME)
 
-diff_store_Mton = hydrogen_storage_capacity_diff(
-    df_base=df_store_flex,
-    df_scen=df_store_noflex,
-    name_base="FLEX",
-    name_scen="NOFLEX",
-)
+    # -------------------------------------------------------------------------
+    # HYDROGEN: production + storage
+    # -------------------------------------------------------------------------
+    _print_block_header("HYDROGEN: production + storage", base_name=BASE_NAME, base_dir=base_dir, scen_name=SCEN_NAME, scen_dir=scen_dir)
+
+    h2_base = load_h2_prod(base_dir)
+    h2_scen = load_h2_prod(scen_dir)
+
+    _ = plot_h2_annual_production_by_tech_diff(
+        h2_base, h2_scen,
+        base_name=BASE_NAME, scen_name=SCEN_NAME,
+        n_scen=N_SCEN, n_hours=12,
+        cols=(
+            "PEM_green production [ton]",
+            "PEM_yellow production [ton]",
+            "PEM_import production [ton]",
+            "ALK production [ton]",
+            "SOEC production [ton]",
+            "Reformer production [ton]",
+        ),
+    )
+
+    h2stor_base = load_h2_storage_inv(base_dir)
+    h2stor_scen = load_h2_storage_inv(scen_dir)
+
+    _ = plot_h2_storage_capacity_diff(
+        h2stor_base, h2stor_scen,
+        base_name=BASE_NAME, scen_name=SCEN_NAME
+    )
 
 
-
-
-
-
+if __name__ == "__main__":
+    # Quick sanity checks: makes it obvious what is being compared
+    for k, p in SCENARIOS.items():
+        if not p.exists():
+            raise FileNotFoundError(f"Scenario '{k}' dir does not exist: {p}")
+    main()

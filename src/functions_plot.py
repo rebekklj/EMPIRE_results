@@ -1,5 +1,7 @@
+from __future__ import annotations
 import os
 import sys
+import csv
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -14,6 +16,375 @@ import cartopy.feature as cfeature
 from matplotlib.patches import Wedge, Circle
 
 # ------------------PLOTTING AV INSTALLERT KAPASITET PER STØRSTE TEKNOLOGIER--------------------------------
+
+# functions_plots.py
+
+
+from pathlib import Path
+from typing import Dict, Optional, Tuple, List
+from collections import defaultdict
+
+
+
+# -----------------------
+# Helpers
+# -----------------------
+def _period_sort_key(p: str):
+    """Sorter perioder som 'YYYY-YYYY' på startår, ellers fall-back til streng."""
+    try:
+        return int(str(p).split("-")[0])
+    except Exception:
+        return str(p)
+
+
+def _to_year(period_value):
+    """
+    Henter ut et årstall fra Period for sortering (f.eks. '2020-2025' -> 2020).
+    Hvis det ikke finnes: behold original.
+    """
+    s = str(period_value)
+    m = re.search(r"(19\d{2}|20\d{2}|21\d{2})", s)
+    return int(m.group(1)) if m else s
+
+
+def default_map_tech(generator_type: str) -> Optional[str]:
+    """
+    En enkel mapping fra GeneratorType -> 'Tech'-label.
+    Tilpass gjerne med dine faktiske navn.
+    """
+    s = str(generator_type).lower()
+
+    if "solar" in s:
+        return "Solar"
+    if "wind" in s and ("onshr" in s or "onshore" in s):
+        return "Wind_onshr"
+    if "nuclear" in s:
+        return "Nuclear"
+    if "bio" in s or "biomass" in s:
+        return "Bio"
+    if "lignite" in s:
+        return "Lignite"
+
+    return None
+
+
+# -----------------------
+# Plots moved from script
+# -----------------------
+def plot_transmission_utilization_duration_curve(
+    transmission_operational: pd.DataFrame,
+    transmission_inv: pd.DataFrame,
+    *,
+    scenario: str,
+    link: str,
+    cap_col: str = "transmissionInstalledCap_MW",
+    used_col: str = "TransmissionReceived_MW",
+    figsize: Tuple[int, int] = (10, 4),
+    savefigure: bool = False,
+    results_dir: Optional[Path] = None,
+    figurename_prefix: Optional[str] = None,
+    show: bool = True,
+):
+    """
+    Lager duration curves for én link (f.eks. 'France - Italy') per periode:
+    stackplot av Used/Unused kapasitet.
+    """
+    op = transmission_operational.copy()
+    inv = transmission_inv.copy()
+
+    # Standardiser link-navn (alfabetisk "A - B")
+    op["Link"] = op.apply(lambda r: " - ".join(sorted([r["FromNode"], r["ToNode"]])), axis=1)
+    inv["Link"] = inv.apply(lambda r: " - ".join(sorted([r["BetweenNode"], r["AndNode"]])), axis=1)
+
+    merge_keys = ["Period", "Link"]
+    inv_small = inv[merge_keys + [cap_col]].copy()
+
+    op = op[op["Scenario"] == scenario].copy()
+    op = op.merge(inv_small, on=merge_keys, how="left")
+
+    op["Used_MW"] = op[used_col].abs()
+    op = op.dropna(subset=[cap_col])
+    op = op[op[cap_col] > 0].copy()
+
+    op["Cap_MW"] = op[cap_col]
+    op["Unused_MW"] = (op["Cap_MW"] - op["Used_MW"]).clip(lower=0)
+    op["Util"] = op["Used_MW"] / op["Cap_MW"]
+
+    d = op[op["Link"] == link].copy()
+    if d.empty:
+        raise ValueError(f"Ingen data for link='{link}' og scenario='{scenario}'.")
+
+    period_order = sorted(d["Period"].unique(), key=_period_sort_key)
+
+    for per in period_order:
+        dp = d[d["Period"] == per].copy()
+        if dp.empty:
+            continue
+
+        dp = dp.sort_values("Used_MW", ascending=False).reset_index(drop=True)
+        x = np.linspace(0, 100, len(dp))
+
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.stackplot(
+            x,
+            dp["Used_MW"].to_numpy(),
+            dp["Unused_MW"].to_numpy(),
+            labels=["Used (MW)", "Unused (MW)"],
+        )
+
+        ax.set_title(f"{link} – {scenario} – {per} (duration curve)")
+        ax.set_xlabel("Andel av timer (%) sortert (høyest → lavest)")
+        ax.set_ylabel("MW")
+        ax.set_ylim(0, float(dp["Cap_MW"].iloc[0]))
+        ax.legend(loc="upper right")
+        fig.tight_layout()
+
+        if savefigure:
+            if results_dir is None:
+                raise ValueError("results_dir må settes når savefigure=True")
+            results_dir = Path(results_dir)
+            results_dir.mkdir(parents=True, exist_ok=True)
+            prefix = (figurename_prefix + "_") if figurename_prefix else ""
+            fname = f"{prefix}transmission_duration_{scenario}_{per}_{link.replace(' ', '')}.png"
+            fig.savefig(results_dir / fname, dpi=200)
+
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
+
+
+def plot_capacity_factors(
+    result_dir: Path | str,
+    *,
+    tech_mapper=default_map_tech,
+    savefigure: bool = False,
+    results_dir: Optional[Path] = None,
+    figurename_prefix: Optional[str] = None,
+    show: bool = True,
+) -> pd.DataFrame:
+    """
+    Leser results_elec_generation_inv.csv og plottar kapasitetfaktor per periode og tech.
+    CF = sum(prod_GWh) / sum(installed_MW * 8760 / 1000)
+    Returnerer aggregerte tall.
+    """
+    result_dir = Path(result_dir)
+    inv_file = result_dir / "results_elec_generation_inv.csv"
+    if not inv_file.exists():
+        raise FileNotFoundError(f"Fant ikke {inv_file}")
+
+    df = pd.read_csv(inv_file)
+
+    required = {"GeneratorType", "Period", "genInstalledCap_MW", "genExpectedAnnualProduction_GWh"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Mangler kolonner i {inv_file.name}: {sorted(missing)}")
+
+    df["Tech"] = df["GeneratorType"].apply(tech_mapper)
+    df = df[df["Tech"].notna()].copy()
+
+    df["cap_gwh"] = df["genInstalledCap_MW"] * 8760.0 / 1000.0
+    grouped = (
+        df.groupby(["Period", "Tech"], as_index=False)
+        .agg(
+            prod_gwh=("genExpectedAnnualProduction_GWh", "sum"),
+            cap_gwh=("cap_gwh", "sum"),
+        )
+    )
+    grouped["CapacityFactor"] = grouped["prod_gwh"] / grouped["cap_gwh"]
+    grouped["YearSort"] = grouped["Period"].apply(_to_year)
+
+    pivot = (
+        grouped.sort_values("YearSort")
+        .pivot(index="Period", columns="Tech", values="CapacityFactor")
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    pivot.plot(marker="o", ax=ax)
+    ax.set_ylabel("Kapasitetsfaktor (andel av 1.0)")
+    ax.set_xlabel("Periode")
+    ax.set_title("Kapasitetsfaktor per teknologi")
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+
+    if savefigure:
+        if results_dir is None:
+            raise ValueError("results_dir må settes når savefigure=True")
+        results_dir = Path(results_dir)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        prefix = (figurename_prefix + "_") if figurename_prefix else ""
+        fig.savefig(results_dir / f"{prefix}capacity_factors.png", dpi=200)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return grouped
+
+
+from pathlib import Path
+from typing import Optional, Dict
+from collections import defaultdict
+import csv
+import matplotlib.pyplot as plt
+
+# Fargekart (som du ga)
+tech_colors = {
+    'Bio': 'darkslategrey',
+    'Bioexisting': 'mediumaquamarine',
+    'Coal': 'teal',
+    'Coalexisting': 'black',
+    'GasCCGT': 'coral',
+    'GasOCGT': 'skyblue',
+    'Gasexisting': 'royalblue',
+    'Geo': 'steelblue',
+    'HydrogenCCGT': 'moccasin',
+    'HydrogenOCGT': 'orange',
+    'Hydroregulated': 'khaki',
+    'Hydrorun-of-the-river': 'yellowgreen',
+    'Liginiteexisting': 'maroon',  # behold om det er slik i dataene
+    'Lignite': 'sienna',
+    'LigniteCCSadv': 'chocolate',
+    'Nuclear': 'pink',
+    'Oilexisting': 'purple',
+    'Solar': 'violet',
+    'Waste': 'navy',
+    'Wave': 'darkslateblue',
+    'Windoffshorefloating': 'slateblue',
+    'Windoffshoregrounded': 'lightsteelblue',
+    'Windonshore': 'seagreen'
+}
+fallback_color = 'lightgrey'
+
+
+def plot_top_annual_expected_generation(
+    result_dir: Path | str,
+    *,
+    tab_dir: Optional[Path | str] = None,
+    n_top: int = 5,
+    group_by: str = "GeneratorType",  # "Technology" eller "GeneratorType"
+    save_path: Optional[Path | str] = None,
+    show: bool = True,
+):
+    """
+    Plotter total expected annual generation [TWh] for topp N grupper over alle perioder.
+    Leser results_elec_generation_inv.csv (kolonne: genExpectedAnnualProduction_GWh)
+
+    group_by:
+      - "Technology": krever tab_dir og filen Sets_GeneratorsOfTechnology.tab
+      - "GeneratorType": bruker GeneratorType direkte
+    """
+    result_dir = Path(result_dir)
+    results_csv = result_dir / "results_elec_generation_inv.csv"
+    if not results_csv.exists():
+        raise FileNotFoundError(f"Fant ikke {results_csv}")
+
+    group_by_clean = (group_by or "GeneratorType").strip().lower()
+
+    # Optional mapping GeneratorType -> Technology via .tab
+    gen_to_tech: Dict[str, str] = {}
+    if group_by_clean == "technology":
+        if tab_dir is None:
+            group_by_clean = "generatortype"
+        else:
+            tab_dir = Path(tab_dir)
+            mapping_file = tab_dir / "Sets_GeneratorsOfTechnology.tab"
+            if not mapping_file.exists():
+                raise FileNotFoundError(f"Fant ikke {mapping_file}")
+
+            with open(mapping_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    tech, gen = parts[0], parts[1]
+                    gen_to_tech.setdefault(gen, tech)
+
+    def group_key(generator_type: str) -> str:
+        # NB: i dataene dine kan "GeneratorType" være selve teknologien.
+        # Hvis group_by=technology, så mapper vi generator -> tech.
+        if group_by_clean == "technology":
+            return gen_to_tech.get(generator_type, "UNKNOWN_TECH")
+        return generator_type
+
+    series = defaultdict(lambda: defaultdict(float))  # series[group][period]
+    all_periods = set()
+
+    with open(results_csv, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        required = {"GeneratorType", "Period", "genExpectedAnnualProduction_GWh"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"Mangler kolonner {sorted(missing)} i {results_csv.name}")
+
+        for row in reader:
+            gen = (row.get("GeneratorType") or "").strip()
+            per = (row.get("Period") or "").strip()
+            val_raw = row.get("genExpectedAnnualProduction_GWh")
+
+            if not gen or not per or val_raw is None:
+                continue
+            try:
+                gwh = float(val_raw)
+            except ValueError:
+                continue
+
+            k = group_key(gen)
+            series[k][per] += gwh / 1e3  # GWh -> TWh
+            all_periods.add(per)
+
+    if not series:
+        raise ValueError("Ingen data funnet i results_elec_generation_inv.csv (etter parsing).")
+
+    # Hvis du allerede har _period_sort_key i prosjektet ditt, behold den.
+    # Her bruker jeg enkel sort som fallback:
+    try:
+        periods = sorted(all_periods, key=_period_sort_key)  # noqa: F821
+    except NameError:
+        periods = sorted(all_periods)
+
+    totals = {k: sum(series[k].get(p, 0.0) for p in periods) for k in series.keys()}
+    top_labels = [k for k, _ in sorted(totals.items(), key=lambda kv: kv[1], reverse=True)[:n_top]]
+
+    x = list(range(len(periods)))
+    y_by_label = {k: [series[k].get(p, 0.0) for p in periods] for k in top_labels}
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for k in top_labels:
+        color = tech_colors.get(k, fallback_color)
+        ax.plot(
+            x,
+            y_by_label[k],
+            marker="o",
+            label=k,
+            color=color
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(periods, rotation=30, ha="right", fontsize=14)
+    ax.tick_params(axis="y", labelsize=14)
+    ax.set_ylabel("Total expected annual generation [TWh]", fontsize=16)
+    ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
+    ax.legend(fontsize=12)
+    fig.tight_layout()
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=200)
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, ax, top_labels, periods, y_by_label
+
 
 def Plot_Installed_capacity_per_tech_split(df,
                                            threshold=90_000,

@@ -11,6 +11,185 @@ from matplotlib.colors import TwoSlopeNorm
 # Felles: finn + last result-csv
 # -----------------------------
 
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import matplotlib.lines as mlines
+
+
+def _period_key(p: str):
+    # robust nok for "2020-2025"
+    a, b = str(p).split("-")
+    return (int(b), int(a))  # sorter på sluttår først
+
+
+def hydrogen_pipeline_capacity_map(
+    df: pd.DataFrame,
+    *,
+    capacity_col: str = "Pipeline total capacity [ton/hr]",
+    period: str | None = None,          # None => siste periode
+    color: str = "tab:blue",
+    agg: str = "max",                    # "max" anbefales for å unngå dobbelttelling
+    min_cap: float = 1e-12,
+    title: str | None = None,
+    savefigure: bool = False,
+    figurename: str | None = None,
+    results_dir: str | Path | None = None,
+):
+    d = df.copy()
+
+    required = {"Between node", "And node", "Period", capacity_col}
+    missing = required - set(d.columns)
+    if missing:
+        raise ValueError(f"Mangler kolonner: {missing}")
+
+    # Velg siste periode hvis ikke oppgitt
+    if period is None:
+        periods = sorted(d["Period"].astype(str).unique(), key=_period_key)
+        if not periods:
+            raise ValueError("Fant ingen Period-verdier.")
+        period = periods[-1]
+
+    d = d[d["Period"].astype(str) == str(period)].copy()
+    if d.empty:
+        raise ValueError(f"Ingen rader for Period='{period}'")
+
+    # Retningsuavhengig nodepar
+    d["node_pair"] = d.apply(
+        lambda r: tuple(sorted([str(r["Between node"]), str(r["And node"])])),
+        axis=1
+    )
+
+    # Aggreger kapasitet per par (max hindrer dobbelttelling hvis begge retninger finnes)
+    if agg == "max":
+        df_sum = d.groupby("node_pair", as_index=False)[capacity_col].max()
+    elif agg == "sum":
+        df_sum = d.groupby("node_pair", as_index=False)[capacity_col].sum()
+    else:
+        raise ValueError("agg må være 'max' eller 'sum'")
+
+    df_sum = df_sum[df_sum[capacity_col] > float(min_cap)]
+    if df_sum.empty:
+        raise ValueError(f"Ingen kapasitet > {min_cap} i perioden {period}")
+
+    # Koordinater (samme som du bruker)
+    node_coords = {
+        "Austria": (14.55, 47.59),
+        "Belgium": (4.47, 50.85),
+        "BosniaH": (17.67, 43.92),
+        "Bulgaria": (25.48, 42.73),
+        "Croatia": (15.98, 45.10),
+        "CzechR": (15.47, 49.74),
+        "Denmark": (10.0, 56.0),
+        "France": (2.21, 46.22),
+        "Germany": (10.45, 51.16),
+        "GreatBrit.": (-2, 53),
+        "Greece": (21.82, 39.07),
+        "Hungary": (19.40, 47.16),
+        "Italy": (12.57, 42.83),
+        "Luxemb.": (6.13, 49.61),
+        "Macedonia": (21.75, 41.61),
+        "Netherlands": (5.29, 52.13),
+        "NO1": (10.98, 60.62),
+        "NO2": (7.38, 59.15),
+        "NO3": (8.0, 62.47),
+        "NO4": (19.0, 69.0),
+        "NO5": (6.52, 60.57),
+        "Poland": (19.14, 52.13),
+        "Portugal": (-8.0, 39.5),
+        "Romania": (24.96, 45.94),
+        "Serbia": (20.45, 44.82),
+        "Slovakia": (19.70, 48.66),
+        "Slovenia": (14.51, 46.15),
+        "Spain": (-3.7, 40.4),
+        "Sweden": (15.00, 60.12),
+        "Switzerland": (8.23, 46.80),
+        "Ireland": (-8, 53.35),
+        "Estonia": (25.0, 58.6),
+        "Latvia": (24.1, 56.9),
+        "Lithuania": (24.0, 55.3),
+        "Finland": (25.0, 61.0)
+    }
+
+    # Bygg linjer
+    lines = []
+    for _, row in df_sum.iterrows():
+        n1, n2 = row["node_pair"]
+        c1 = node_coords.get(n1)
+        c2 = node_coords.get(n2)
+        if c1 and c2:
+            lines.append({"coords": [c1, c2], "value": float(row[capacity_col]), "nodes": f"{n1}–{n2}"})
+
+    if not lines:
+        raise ValueError("Ingen linjer å plotte (mangler koordinater for alle par).")
+
+    # Plot
+    fig = plt.figure(figsize=(12, 12))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.set_extent([-9, 30, 34, 72], crs=ccrs.PlateCarree())
+
+    ax.add_feature(cfeature.LAND, facecolor="whitesmoke")
+    ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.5)
+    ax.add_feature(cfeature.COASTLINE)
+
+    max_val = max(l["value"] for l in lines)
+
+    # Diskrete nivåer (som din stil)
+    bins = [0.0, 0.05,0.2, 0.4, 0.6,0.8, 1.0]
+    widths = [1,6, 11, 16,24, 30]
+
+    for l in lines:
+        ratio = l["value"] / max_val if max_val > 0 else 0.0
+        lw = widths[-1]
+        for i in range(len(bins) - 1):
+            if bins[i] <= ratio < bins[i + 1]:
+                lw = widths[i]
+                break
+        xs, ys = zip(*l["coords"])
+        ax.plot(xs, ys, color=color, linewidth=lw, alpha=0.55, transform=ccrs.PlateCarree())
+
+    # Legend
+    legend_lines = []
+    min_pos = df_sum.loc[df_sum[capacity_col] > 0, capacity_col].min()
+    for i in range(len(widths)):
+        lo = bins[i] * max_val
+        if lo == 0:
+            lo = float(min_pos)
+        hi = bins[i + 1] * max_val
+        legend_lines.append(
+            mlines.Line2D([], [], color=color, linewidth=widths[i], label=f"{lo:.2f} – {hi:.2f} ton/hr")
+        )
+
+    ax.legend(
+        handles=legend_lines,
+        title=f"{capacity_col}",
+        loc="upper left",
+        frameon=True,
+        labelspacing=1.2,
+        fontsize=20,
+        title_fontsize=20,
+    )
+
+    # Noder
+    for name, (lon, lat) in node_coords.items():
+        ax.plot(lon, lat, marker="o", color="black", markersize=3, transform=ccrs.PlateCarree())
+    fig.tight_layout()
+
+    if savefigure and results_dir and figurename:
+        outdir = Path(results_dir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        figpath = outdir / f"{figurename}_hydrogenPipelineMap_{period}.png"
+        plt.savefig(figpath, dpi=300, bbox_inches="tight")
+        print(f"Figure saved to {figpath}")
+
+    plt.show()
+    return df_sum, fig, ax
+
+
 def find_result_files(base_dir: Union[str, Path], filename: str) -> list[Path]:
     base = Path(base_dir).expanduser().resolve()
     return sorted(base.rglob(filename))
@@ -113,20 +292,7 @@ def link_activity_matrix(
     value_is: str = "MW",            # "MW" eller "H2_ton_per_h" (for labeling/konvertering)
     h2_mwh_per_ton: float = 33.3,    # brukes hvis value_is == "H2_ton_per_h" og du vil til TWh
 ) -> Tuple[pd.DataFrame, str]:
-    """
-    Lager eksport→import matrise (y=FromNode, x=ToNode) for en generisk "Value".
 
-    mode:
-      - "mean"           : gjennomsnitt av Value (per representant-time)
-      - "sum"            : sum av Value over rader (mest for feilsjekk)
-      - "expected_total" : forventet total over året:
-            Value * season_scale[Season] * p(Scenario)*p(GasScenario)
-            -> for MW blir dette MWh
-            -> for H2_ton_per_h blir dette ton
-      - "expected_TWh"   : som expected_total, men konvertert til TWh:
-            MW: MWh / 1e6
-            H2 ton: ton * h2_mwh_per_ton / 1e6
-    """
     if df.empty:
         raise ValueError("Input-dataframe er tom.")
 
@@ -420,3 +586,14 @@ fig, ax = plot_diff_heatmap(
 )
 
 plt.show()
+
+df_h2 = pd.read_csv(result_dir1/"results_hydrogen_pipeline_inv.csv")
+
+df_sum_last, fig, ax = hydrogen_pipeline_capacity_map(
+    df_h2,
+    capacity_col="Pipeline total capacity [ton/hr]",  # evt "Pipeline capacity built [ton/hr]" osv.
+    period='2050-2055',          # None => siste periode (f.eks. 2050-2055)
+    agg="max",            # viktig for “bare én retning”
+    color="tab:blue",
+)
+

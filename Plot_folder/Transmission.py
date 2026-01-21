@@ -1,4 +1,10 @@
+from pathlib import Path
+from typing import Optional, Dict, Tuple, Union, Iterable
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.colors import TwoSlopeNorm
 # -----------------------------
 # Paths
 # -----------------------------
@@ -6,7 +12,7 @@ project_dir = Path(__file__).resolve().parents[1]  # EMPIRE_results_git
 data_dir = project_dir / "data"
 
 result_dir1 = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_cyclelim" / "full_model_base"
-result_dir2 = data_dir / "Results_FINAL_optimistic_price_scen" / "full_model_base"
+result_dir2 = data_dir / "Results_FINAL_BASE_FLEX_emcap_cyclelim" / "full_model_base"
 
 # -----------------------------
 # 1) Lesing av resultater
@@ -325,25 +331,7 @@ seasScale = {
 
 
 
-mat, fig, ax = plot_transmission_activity_from_folder(
-    base_dir=result_dir1,
-    period='2050-2055',
-    mode="expected_TWh",
-    season_scale=seasScale,
-    annotate=True,
-)
-plt.show()
-
-
-
 from matplotlib.colors import TwoSlopeNorm
-
-
-# --- (forutsetter at du allerede har disse fra tidligere) ---
-# - load_transmission_operational(base_dir) -> pd.DataFrame
-# - transmission_activity_matrix(df, period, ...) -> (mat, unit)
-# - drop_all_zero_rows_cols(mat, tol=...)
-# -----------------------------------------------------------
 
 
 def align_square_matrices(m1: pd.DataFrame, m2: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -548,8 +536,20 @@ def plot_transmission_difference_from_folders(
 
 season_scale = {
     "winter": 26.0, "spring": 26.0, "summer": 26.0, "fall": 26.0,
-    "peak1": 12.0, "peak2": 12.0,
+    "peak1": 1.0, "peak2": 1.0,
 }
+
+
+mat, fig, ax = plot_transmission_activity_from_folder(
+    base_dir=result_dir1,
+    period='2050-2055',
+    mode="expected_TWh",
+    season_scale=seasScale,
+    annotate=True,
+)
+plt.show()
+
+
 
 diff, fig, ax = plot_transmission_difference_from_folders(
     result_dir1, result_dir2,
@@ -565,3 +565,5 @@ diff, fig, ax = plot_transmission_difference_from_folders(
 )
 
 plt.show()
+
+from functions_plot import transmission_map

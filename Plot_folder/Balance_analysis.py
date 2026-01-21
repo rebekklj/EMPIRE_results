@@ -16,7 +16,7 @@ from matplotlib.patches import Wedge, Circle
 project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
 data_dir = project_dir / "data"
 
-result_dir= data_dir / "Results_FINAL_BASE_NOFLEX_emcap" / 'full_model_base'
+result_dir= data_dir / "Results_FINAL_BASE_NOFLEX_emcap_cyclelim" / 'full_model_base'
 
 result_dir2= data_dir / 'Results_FINAL_BASE_sys2' / 'full_model_base'
 result_dir8=data_dir / 'Results_FINAL_BASE_sys8' / 'full_model_base'

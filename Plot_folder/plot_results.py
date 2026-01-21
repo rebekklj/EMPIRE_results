@@ -1,203 +1,220 @@
 from pathlib import Path
 import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
 
-from functions_plot import (Expected_annual_production, plot_top_map,
-                            P_prodVSimport_piechart, Plot_Installed_capacity_per_tech_split,
-                            HydrogenProd_piechart, plot_power_demand, plot_hydrogen_use,
-                            H2prod_per_country, plot_hydrogen_capacity, plot_OBJ_generator_inv,
-                            plot_H2_costs_per_period, plot_DGF_charge_discharge_stochastic,
-                            HydrogenStorage_scatter, plot_DGF_charge_discharge_stochastic,
-                            plot_discharge_cycles_sawtooth,plot_power_balance_for_high_h2,
-                            hydrogen_prod_vs_import_bar,Yearly_hydrogenProd_perTech,
-                            plot_storage_charge_discharge_total,plot_h2_prod_discharge_plus_demand,
-                            Power_gen_hourly,Duration_curve_power_prod)
+from functions_plot import (
+    Expected_annual_production,
+    plot_top_map,
+    P_prodVSimport_piechart,
+    Plot_Installed_capacity_per_tech_split,
+    HydrogenProd_piechart,
+    plot_power_demand,
+    plot_hydrogen_use,
+    plot_OBJ_generator_inv,
+    plot_H2_costs_per_period,
+    plot_DGF_charge_discharge_stochastic,
+    HydrogenStorage_scatter,
+    plot_discharge_cycles_sawtooth,
+    plot_power_balance_for_high_h2,
+    hydrogen_prod_vs_import_bar,
+    Yearly_hydrogenProd_perTech,
+    plot_storage_charge_discharge_total,
+    plot_h2_prod_discharge_plus_demand,
+    Power_gen_hourly,
+    Duration_curve_power_prod,
+    plot_transmission_utilization_duration_curve,
+    plot_capacity_factors,
+    plot_top_annual_expected_generation,
+)
 
 
-project_dir = Path(__file__).resolve().parents[1] #EMPIRE_results_git mappen
+# -----------------------
+# Paths / config
+# -----------------------
+project_dir = Path(__file__).resolve().parents[1]
 data_dir = project_dir / "data"
-result_dir = data_dir / "Results_FINAL_BASE_NOFLEX_emcap_cyclelim" / "full_model_base"
-plot_dir = data_dir / "Results_FINAL_woALKSOEC" #lagrer figurene i resultat mappen
-plot_dir.mkdir(exist_ok=True)
+result_dir = data_dir / "Results_FINAL_optimistic_price_scen" / "full_model_base"
 
-Lagre_figurer =False
-figurnavn = "BASE_moderate"
+plot_dir = data_dir / "Results_woH2_storage"
+plot_dir.mkdir(parents=True, exist_ok=True)
 
-gen_info=('no')
-H2_prod='no'
-el_demand='no'
-H2_storage='no'
+SAVE_FIGURES = False
+FIGURE_TAG = "BASE_moderate"
 
-# In[]
-if gen_info=='yes':
-    Elec_generation_inv = pd.read_csv(result_dir / "results_elec_generation_inv.csv")
+DO_GEN_INFO = False
+DO_H2_PROD = False
+DO_EL_DEMAND = False
+DO_H2_STORAGE = True
+DO_POWER_OPERATIONAL= False
+
+# -----------------------
+# General info
+# -----------------------
+if DO_GEN_INFO:
+    elec_generation_inv = pd.read_csv(result_dir / "results_elec_generation_inv.csv")
 
     Expected_annual_production(
-        Elec_generation_inv,
-        savefigure=Lagre_figurer,
+        elec_generation_inv,
+        savefigure=SAVE_FIGURES,
         results_dir=plot_dir,
-        figurename=figurnavn
+        figurename=FIGURE_TAG,
     )
 
-    Europe_summary = pd.read_csv((result_dir/ "results_output_EuropeSummary.csv"), delimiter=",",skiprows=16, usecols=[0, 1, 2, 3, 4, 5], skipfooter=16, engine='python')
-    Europe_summary["genExistingCap_MW"] = (Europe_summary["genInstalledCap_MW"] - Europe_summary["genInvCap_MW"])
-
-    Plot_Installed_capacity_per_tech_split(Europe_summary,
-                                               threshold=90_000,
-                                               figsize=(18, 12),
-                                               savefigure=Lagre_figurer,
-                                               figurename=figurnavn, results_dir=plot_dir)
-
-# In[] Power production
-
-Power_generation = pd.read_csv(
-    result_dir / "results_elec_generation_operational.csv",  index_col=False)
-
-Power_gen_hourly(Power_generation)
-Duration_curve_power_prod(Power_generation)
-
-# In[] Transmission utilization
-
-transmission_operational = pd.read_csv(result_dir/ 'results_elec_transmission_operational.csv')
-transmission_inv = pd.read_csv(result_dir/ 'results_transmission_inv.csv')
-
-scenario = "scenario2"
-
-op = transmission_operational.copy()
-inv = transmission_inv.copy()
-
-op["Link"]  = op.apply(lambda r: " - ".join(sorted([r["FromNode"], r["ToNode"]])), axis=1)
-inv["Link"] = inv.apply(lambda r: " - ".join(sorted([r["BetweenNode"], r["AndNode"]])), axis=1)
-
-# --- Velg kapasitet (anbefalt: InstalledCap) ---
-cap_col = "transmissionInstalledCap_MW"
-
-# Hvis invest-fila er scenario-uavhengig (slik den ser ut hos deg), merge på Period+Link
-merge_keys = ["Period", "Link"]
-inv_small = inv[merge_keys + [cap_col]].copy()
-
-op = op[op["Scenario"] == scenario].copy()
-op = op.merge(inv_small, on=merge_keys, how="left")
-
-# --- Brukt kapasitet: absolutt flyt (MW). Du kan også inkludere losses om du vil.
-op["Used_MW"] = op["TransmissionReceived_MW"].abs()
-
-# Unngå tull hvis kapasitet mangler / er 0
-op = op.dropna(subset=[cap_col])
-op = op[op[cap_col] > 0].copy()
-
-op["Cap_MW"] = op[cap_col]
-op["Unused_MW"] = (op["Cap_MW"] - op["Used_MW"]).clip(lower=0)
-op["Util"] = op["Used_MW"] / op["Cap_MW"]  # 0-1
-
-link = "France - Italy"  # skriv slik som Link blir (alfabetisk med " - ")
-
-d = op[op["Link"] == link].copy()
-
-period_order = sorted(d["Period"].unique(), key=lambda s: int(str(s).split("-")[0]))
-
-for per in period_order:
-    dp = d[d["Period"] == per].copy()
-
-    # Duration curve: sorter timer etter brukt kapasitet (høy -> lav)
-    dp = dp.sort_values("Used_MW", ascending=False).reset_index(drop=True)
-
-    # x-akse i % av timer (0-100)
-    x = np.linspace(0, 100, len(dp))
-
-    fig, ax = plt.subplots(figsize=(10, 4.5))
-    ax.stackplot(
-        x,
-        dp["Used_MW"].to_numpy(),
-        dp["Unused_MW"].to_numpy(),
-        labels=["Used (MW)", "Unused (MW)"]
+    europe_summary = pd.read_csv(
+        result_dir / "results_output_EuropeSummary.csv",
+        delimiter=",",
+        skiprows=16,
+        usecols=[0, 1, 2, 3, 4, 5],
+        skipfooter=16,
+        engine="python",
     )
-    ax.set_title(f"{link} – {scenario} – {per} (duration curve)")
-    ax.set_xlabel("Andel av timer (%) sortert (høyest → lavest)")
-    ax.set_ylabel("MW")
-    ax.set_ylim(0, dp["Cap_MW"].iloc[0])  # kapasitet er konstant innen periode for linken
-    ax.legend(loc="upper right")
-    plt.tight_layout()
-    plt.show()
+    europe_summary["genExistingCap_MW"] = (
+        europe_summary["genInstalledCap_MW"] - europe_summary["genInvCap_MW"]
+    )
+
+    Plot_Installed_capacity_per_tech_split(
+        europe_summary,
+        threshold=90_000,
+        figsize=(18, 12),
+        savefigure=SAVE_FIGURES,
+        figurename=FIGURE_TAG,
+        results_dir=plot_dir,
+    )
+
+if DO_POWER_OPERATIONAL:
+
+    power_generation = pd.read_csv(result_dir / "results_elec_generation_operational.csv", index_col=False)
+    Power_gen_hourly(power_generation)
+    Duration_curve_power_prod(power_generation)
+
+    transmission_operational = pd.read_csv(result_dir / "results_elec_transmission_operational.csv")
+    transmission_inv = pd.read_csv(result_dir / "results_transmission_inv.csv")
+
+    plot_transmission_utilization_duration_curve(
+        transmission_operational,
+        transmission_inv,
+        scenario="scenario2",
+        link="France - Italy",
+        savefigure=SAVE_FIGURES,
+        results_dir=plot_dir,
+        figurename_prefix=FIGURE_TAG,
+        show=True,
+    )
 
 
-# In[]
-Power_balance= pd.read_csv(result_dir / "results_power_balance.csv")
-if gen_info=='yes':
-    P_prodVSimport_piechart(Power_balance, 12, 2, savefigure=Lagre_figurer, figurename=figurnavn, results_dir=plot_dir)
+# -----------------------
+# Power balance + maps
+# -----------------------
+power_balance = pd.read_csv(result_dir / "results_power_balance.csv")
 
-    plot_top_map(Elec_generation_inv,3,savefigure=Lagre_figurer, figurename=figurnavn, results_dir=plot_dir)
+if DO_GEN_INFO:
+    P_prodVSimport_piechart(
+        power_balance, 12, 2,
+        savefigure=SAVE_FIGURES,
+        figurename=FIGURE_TAG,
+        results_dir=plot_dir,
+    )
 
-# In[]
-hydrogen_production=pd.read_csv(result_dir/ 'results_hydrogen_production.csv')
-if H2_prod=='yes':
-    HydrogenProd_piechart(hydrogen_production, 12, 2, savefigure=Lagre_figurer, figurename=figurnavn, results_dir=plot_dir)
-    Yearly_hydrogenProd_perTech(hydrogen_production, 'PEM_green production [ton]', 'PEM_yellow production [ton]','PEM_import production [ton]',
-                                'ALK production [ton]', 'SOEC production [ton]', 'Reformer production [ton]', 2, 12, 55)
+    plot_top_map(
+        elec_generation_inv, 3,
+        savefigure=SAVE_FIGURES,
+        figurename=FIGURE_TAG,
+        results_dir=plot_dir,
+    )
 
-# In[]
 
-if el_demand=='yes':
-    Power_balance['Power reformer plant [MWh]'] = Power_balance['Power reformer plant [MWh]'] * (-1)
-    plot_power_demand(Power_balance,n_hours=12)
+# -----------------------
+# Hydrogen production
+# -----------------------
+hydrogen_production = pd.read_csv(result_dir / "results_hydrogen_production.csv")
 
-# In[]
-hydrogen_use=pd.read_csv(result_dir/ 'results_hydrogen_use.csv')
-if H2_prod=='yes':
+if DO_H2_PROD:
+    HydrogenProd_piechart(
+        hydrogen_production, 12, 2,
+        savefigure=SAVE_FIGURES,
+        figurename=FIGURE_TAG,
+        results_dir=plot_dir,
+    )
+
+    Yearly_hydrogenProd_perTech(
+        hydrogen_production,
+        "PEM_green production [ton]",
+        "PEM_yellow production [ton]",
+        "PEM_import production [ton]",
+        "ALK production [ton]",
+        "SOEC production [ton]",
+        "Reformer production [ton]",
+        2, 12, 55,
+    )
+
+
+# -----------------------
+# Electricity demand
+# -----------------------
+if DO_EL_DEMAND:
+    power_balance = power_balance.copy()
+    power_balance["Power reformer plant [MWh]"] *= -1
+    plot_power_demand(power_balance, n_hours=12)
+
+
+# -----------------------
+# Hydrogen use
+# -----------------------
+hydrogen_use = pd.read_csv(result_dir / "results_hydrogen_use.csv")
+
+if DO_H2_PROD:
     plot_hydrogen_use(hydrogen_use, 12, 2, savefigure=False, figurename=None, results_dir=None)
     hydrogen_prod_vs_import_bar(hydrogen_use)
 
 
-# In[]
-if H2_storage=='yes':
+# -----------------------
+# Hydrogen storage / costs
+# -----------------------
+if DO_H2_STORAGE:
+    gen_inv = pd.read_csv(result_dir / "results_objective_components_generation_inv_costs.csv")
+    gen_op = pd.read_csv(result_dir / "results_objective_components_operational_costs.csv")
+    h2_inv = pd.read_csv(result_dir / "results_hydrogen_costs.csv")
+    stor_el = pd.read_csv(result_dir / "results_objective_components_storage_inv_costs.csv")
+    trans_inv_costs = pd.read_csv(result_dir / "results_objective_components_transmission_inv_costs.csv")
 
-    Gen_inv=pd.read_csv(result_dir/ 'results_objective_components_generation_inv_costs.csv')
-    Gen_op=pd.read_csv(result_dir/ 'results_objective_components_operational_costs.csv')
-    H2_inv=pd.read_csv(result_dir/ 'results_hydrogen_costs.csv')
-    Stor_el=pd.read_csv(result_dir/ 'results_objective_components_storage_inv_costs.csv')
-    Trans_inv=pd.read_csv(result_dir/ 'results_objective_components_transmission_inv_costs.csv')
-    plot_OBJ_generator_inv(Gen_op,Gen_inv,H2_inv,Stor_el,Trans_inv,2)
+    plot_OBJ_generator_inv(gen_op, gen_inv, h2_inv, stor_el, trans_inv_costs, 2)
+    plot_H2_costs_per_period(h2_inv)
 
-    plot_H2_costs_per_period(H2_inv)
-
-    H2_storage=pd.read_csv(result_dir/ 'results_hydrogen_storage_inv.csv')
-
-    periods=["2020-2025", "2025-2030", "2030-2035", "2035-2040",
-                   "2040-2045", "2045-2050", "2050-2055"]
-
+    h2_storage_inv = pd.read_csv(result_dir / "results_hydrogen_storage_inv.csv")
+    periods = [
+        "2020-2025", "2025-2030", "2030-2035", "2035-2040",
+        "2040-2045", "2045-2050", "2050-2055",
+    ]
     for period in periods:
-        HydrogenStorage_scatter(H2_storage, period, savefigure=False, figurename=None, results_dir=None)
+        HydrogenStorage_scatter(h2_storage_inv, period, savefigure=False, figurename=None, results_dir=None)
 
-    df = pd.read_csv(result_dir/"results_hydrogen_storage_operational.csv")
-    plot_DGF_charge_discharge_stochastic(df,
-                              node="Germany",
-                              period="2045-2050",
-                              gasscenario=1,
-                              scenario='scenario1')
+    h2_storage_op = pd.read_csv(result_dir / "results_hydrogen_storage_operational.csv")
 
+    plot_DGF_charge_discharge_stochastic(
+        h2_storage_op,
+        node="Germany",
+        period="2045-2050",
+        gasscenario=1,
+        scenario="scenario1",
+    )
 
-    df = pd.read_csv(result_dir / "results_hydrogen_storage_operational.csv")
     plot_discharge_cycles_sawtooth(
-        df,
+        h2_storage_op,
         node="Germany",
         period="2045-2050",
         gasscenario=1,
         tech="DGF",
         capacity=6545.9,
-        scenario='scenario1'
+        scenario="scenario1",
     )
 
-    plot_power_balance_for_high_h2(Power_balance,'2045-2050','scenario1','Germany')
+    plot_power_balance_for_high_h2(power_balance, "2045-2050", "scenario1", "Germany")
 
-    plot_storage_charge_discharge_total(df,'2045-2050',1,'scenario1','DGF')
-    plot_storage_charge_discharge_total(df, '2045-2050', 1, 'scenario1', 'Aquifer')
-    plot_storage_charge_discharge_total(df, '2045-2050', 1, 'scenario1', 'SaltCavern')
+    for tech in ["DGF", "Aquifer", "SaltCavern"]:
+        plot_storage_charge_discharge_total(h2_storage_op, "2045-2050", 1, "scenario1", tech)
 
-
-    merged = plot_h2_prod_discharge_plus_demand(
+    _merged = plot_h2_prod_discharge_plus_demand(
         hydrogen_production,
-        df,
+        h2_storage_op,
         hydrogen_use,
         period="2050-2055",
         gasscenario=1,
@@ -205,109 +222,128 @@ if H2_storage=='yes':
     )
 
 
-from pathlib import Path
-import re
-import pandas as pd
+# -----------------------
+# NEW: capacity factors + top expected generation (moved into functions_plots)
+# -----------------------
+_ = plot_capacity_factors(
+    result_dir,
+    savefigure=SAVE_FIGURES,
+    results_dir=plot_dir,
+    figurename_prefix=FIGURE_TAG,
+    show=True,
+)
+
+plot_top_annual_expected_generation(
+    result_dir,
+    n_top=5,
+    group_by="GeneratorType",
+    show=True,
+)
+
+
+# --------------------------------
+# Kjernekraft europa
+# -------------------------------
+
 import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.io import shapereader
+from matplotlib.patches import Patch
 
+def plot_europe_colored_countries(savefigure=False, figurename="europe_colored.png"):
+    # --- Landgrupper (med noen vanlige alias) ---
+    teal = {
+        "Belarus",               # (du skrev Belsarus)
+        "Belgium",
+        "Bulgaria",
+        "Czechia", "Czech Republic",
+        "Finland",
+        "France",
+        "Hungary",
+        "Netherlands",
+        "Romania",
+        "Slovakia",
+        "Slovenia",
+        "Spain",
+        "Sweden",
+        "Switzerland",
+        "United Kingdom",
+        "Ukraine",
+    }
 
-def _to_year(period_value):
-    """
-    Period i output er ofte inv_per[int(i-1)] (typisk år som tekst).
-    Prøver å hente ut et årstall for sortering. Hvis ikke: behold original.
-    """
-    s = str(period_value)
-    m = re.search(r"(19\d{2}|20\d{2}|21\d{2})", s)
-    return int(m.group(1)) if m else s
+    grey = {"Norway", "Lithuania", "Latvia"}  # spesifisert av deg (men alle "andre" blir også grå)
+    yellow = {"Estonia", "Poland"}
+    orange_red = {'Ireland',"Italy", "Portugal", "Germany", "Luxembourg", "Austria", "Denmark"}
 
+    # Farger
+    COLORS = {
+        "teal": "teal",
+        "grey": "lightgrey",
+        "gold": "gold",
+        "orange": "orange",
+    }
 
-def map_tech(generator_type: str):
-    s = str(generator_type).lower()
+    # --- Kartoppsett (likt som i din funksjon) ---
+    fig = plt.figure(figsize=(14, 12))
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.set_extent([-11, 40, 34, 72], crs=ccrs.PlateCarree())
 
-    # Solar
-    if "solar" in s:
-        return "Solar"
+    ax.add_feature(cfeature.LAND, facecolor="whitesmoke")
+    ax.add_feature(cfeature.BORDERS, linestyle=":", alpha=0.6, linewidth=0.6)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
 
-    # Onshore wind (tilpass gjerne til dine faktiske navn)
-    if "wind" in s and ("onshr" in s or "onshore" in s):
-        return "Wind_onshr"
+    # --- Landpolygoner (Natural Earth) ---
+    shp = shapereader.natural_earth(
+        resolution="50m",
+        category="cultural",
+        name="admin_0_countries"
+    )
+    reader = shapereader.Reader(shp)
 
-    # Nuclear
-    if "nuclear" in s:
-        return "Nuclear"
+    # Default: alle europeiske land = grå, med overstyring for gruppene over
+    for rec in reader.records():
+        attrs = rec.attributes
+        continent = attrs.get("CONTINENT", "")
+        name = attrs.get("ADMIN", "")
 
-    # Bio (biomass/bioenergy etc.)
-    if "bio" in s or "biomass" in s:
-        return "Bio"
+        if continent != "Europe":
+            continue
 
-    # Lignite
-    if "lignite" in s:
-        return "Lignite"
+        if name in teal:
+            fc = COLORS["teal"]
+        elif name in yellow:
+            fc = COLORS["gold"]
+        elif name in orange_red:
+            fc = COLORS["orange"]
+        else:
+            fc = COLORS["grey"]  # alt annet i Europa blir grått (inkl. land du ikke nevnte)
 
-    return None
-
-
-def plot_capacity_factors(result_dir: str):
-    result_dir = Path(result_dir)
-    inv_file = result_dir / "results_elec_generation_inv.csv"
-
-    if not inv_file.exists():
-        raise FileNotFoundError(
-            f"Fant ikke {inv_file}. Sørg for at include_results inkluderer "
-            f"'results_elec_generation_inv' i kjøringen."
+        ax.add_geometries(
+            [rec.geometry],
+            crs=ccrs.PlateCarree(),
+            facecolor=fc,
+            edgecolor="black",
+            linewidth=0.3,
+            alpha=0.95
         )
 
-    df = pd.read_csv(inv_file)
+    # Legende
+    legend_handles = [
+        Patch(facecolor=COLORS["teal"], edgecolor="black", label="Operational NPP plants"),
+        Patch(facecolor=COLORS["grey"], edgecolor="black", label="No NPP generation per date."),
+        Patch(facecolor=COLORS["gold"], edgecolor="black", label="No NPP per date, but planned construction."),
+        Patch(facecolor=COLORS["orange"], edgecolor="black", label="No NPP, and bans building per date."),
+    ]
+    ax.legend(handles=legend_handles, loc="upper left", frameon=True, fontsize=18)
 
-    required = {"GeneratorType", "Period", "genInstalledCap_MW", "genExpectedAnnualProduction_GWh"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"Mangler kolonner i {inv_file.name}: {sorted(missing)}")
-
-    df["Tech"] = df["GeneratorType"].apply(map_tech)
-    df = df[df["Tech"].notna()].copy()
-
-    # (valgfritt) print hva som faktisk ble mappa
-    print("GeneratorType som inngår per tech:")
-    for tech, gtypes in df.groupby("Tech")["GeneratorType"].unique().items():
-        print(f"  {tech}: {sorted(map(str, gtypes))}")
-
-    # Aggreger CF per periode og tech:
-    # CF = sum(prod_GWh) / sum(installed_MW * 8760 / 1000)
-    df["cap_gwh"] = df["genInstalledCap_MW"] * 8760.0 / 1000.0
-    grouped = (
-        df.groupby(["Period", "Tech"], as_index=False)
-          .agg(prod_gwh=("genExpectedAnnualProduction_GWh", "sum"),
-               cap_gwh=("cap_gwh", "sum"))
-    )
-    grouped["CapacityFactor"] = grouped["prod_gwh"] / grouped["cap_gwh"]
-    grouped["YearSort"] = grouped["Period"].apply(_to_year)
-
-    # Pivot for plotting
-    pivot = (
-        grouped.sort_values("YearSort")
-               .pivot(index="Period", columns="Tech", values="CapacityFactor")
-    )
-
-    ax = pivot.plot(marker="o")
-    ax.set_ylabel("Kapasitetsfaktor (andel av 1.0)")
-    ax.set_xlabel("Periode")
-    ax.set_title("Kapasitetsfaktor per teknologi")
-    ax.grid(True, axis="y", alpha=0.3)
     plt.tight_layout()
+
+    if savefigure:
+        plt.savefig(figurename, dpi=300, bbox_inches="tight")
+        print(f"Saved: {figurename}")
+
     plt.show()
 
-    return grouped
-
-
-# Eksempel:
-grouped_df = plot_capacity_factors(result_dir)
-
-
-
-
-
-
-
-
-
+# Kjør:
+plot_europe_colored_countries()
